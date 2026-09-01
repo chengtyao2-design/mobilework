@@ -21,6 +21,8 @@
     "agent_command": [
       "opencode",
       "run",
+      "--format",
+      "json",
       "--dir",
       "{root}",
       "{prompt}"

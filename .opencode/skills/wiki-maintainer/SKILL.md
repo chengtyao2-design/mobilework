@@ -18,7 +18,7 @@ entry point `.venv/Scripts/wiki.exe`. On POSIX systems the equivalent path is
 ## Start or resume a batch
 
 ```bash
-.venv/Scripts/wiki.exe --root . pending
+.venv/Scripts/wiki.exe --root . pending --summary
 ```
 
 If there is no pending batch, run:
@@ -27,7 +27,31 @@ If there is no pending batch, run:
 .venv/Scripts/wiki.exe --root . prepare
 ```
 
-Read the returned `work-order.json`, `purpose.md`, `schema.md`, and `wiki/index.md`. Work only inside the `staging_wiki` path named by the work order. Never edit active `wiki/` pages during a batch; the engine needs this boundary to detect concurrent human edits and apply the result safely.
+Read `purpose.md`, `schema.md`, and `wiki/index.md`. Do not print or read the complete
+`work-order.json` for a non-trivial batch: it embeds every source chunk body and can
+overflow tool output or model context. The compact summary contains the source IDs
+and paths. Process exactly one source end-to-end before inspecting the next source.
+Never issue parallel or bulk source reads. Before processing that source, request
+only its bounded metadata:
+
+```bash
+.venv/Scripts/wiki.exe --root . pending --source-id SOURCE_ID
+```
+
+This returns chunk IDs, hashes, ordinals, and sizes without chunk bodies or previews.
+Do not request metadata for every source up front. When exact evidence is needed,
+request only one bounded chunk:
+
+```bash
+.venv/Scripts/wiki.exe --root . pending --source-id SOURCE_ID --chunk ORDINAL
+```
+
+Read the event's `extracted_path` only if chunk-level access is insufficient, and
+then read it sequentially in bounded sections. Finish that source's Stage 1 analysis
+entry before moving to the next source. Work
+only inside the `staging_wiki` path named by the summary. Never edit active `wiki/`
+pages during a batch; the engine needs this boundary to detect concurrent human edits
+and apply the result safely.
 
 Use the deterministic aids in each event before broad reads:
 

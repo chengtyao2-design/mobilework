@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from typing import TextIO
 
 RESET = "\033[0m"
@@ -64,3 +65,55 @@ def note(text: str, color: str = "", stream: TextIO | None = None) -> None:
     if not enabled(target):
         return
     print(paint(text, color, target), file=target, flush=True)
+
+
+class Spinner:
+    """A single-line progress display that disappears cleanly in non-TTY use."""
+
+    FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+    def __init__(self, text: str, stream: TextIO | None = None) -> None:
+        self.stream = stream if stream is not None else sys.stderr
+        self.text = text
+        self.active = enabled(self.stream)
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> "Spinner":
+        if self.active:
+            self._thread = threading.Thread(target=self._animate, daemon=True)
+            self._thread.start()
+        return self
+
+    def _animate(self) -> None:
+        index = 0
+        while not self._stop.wait(0.09):
+            with self._lock:
+                message = self.text
+            rendered = paint(self.FRAMES[index % len(self.FRAMES)], CYAN, self.stream)
+            self.stream.write(f"\r\x1b[2K  {rendered}  {message}")
+            self.stream.flush()
+            index += 1
+
+    def update(self, text: str) -> None:
+        with self._lock:
+            self.text = text
+
+    def finish(self, text: str, state: str = "ok") -> None:
+        if not self.active:
+            return
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=0.5)
+        symbol = "✓" if state in {"ok", "committed"} else "!" if state == "warn" else "✗"
+        color = status_color(state)
+        self.stream.write(f"\r\x1b[2K  {paint(symbol, color, self.stream)}  {text}\n")
+        self.stream.flush()
+
+    def __enter__(self) -> "Spinner":
+        return self.start()
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        if not self._stop.is_set():
+            self.finish("Interrupted" if exc_type else self.text, "fail" if exc_type else "ok")

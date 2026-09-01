@@ -40,7 +40,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "interval_seconds": 2.0,
         "settle_seconds": 1.0,
         "retry_seconds": 30.0,
-        "agent_command": ["opencode", "run", "--dir", "{root}", "{prompt}"],
+        "agent_command": ["opencode", "run", "--format", "json", "--dir", "{root}", "{prompt}"],
     },
 }
 
