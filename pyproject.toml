@@ -1,0 +1,35 @@
+[project]
+name = "mobilework"
+version = "0.1.0"
+description = "opencode 驱动的 wiki 构建维护与分档检索"
+requires-python = ">=3.11"
+# license 字段待定：third_party/wiki-retrieval-mcp 下的移植打分策略为 GPLv3，替换完成前不声明许可
+dependencies = [
+    "mcp",
+    "lancedb",
+    "pyarrow",
+    "httpx",
+]
+
+[project.optional-dependencies]
+# 仅 parsing/ 解析环节需要；.doc/.docx 走 macOS 自带 textutil，无额外依赖
+parsing = [
+    "pymupdf",
+    "xlrd",
+    "olefile",
+]
+# 本地开发与测试
+dev = [
+    "pytest",
+    "openpyxl",
+]
+
+[project.scripts]
+wiki = "wiki_maintainer.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["wiki_common", "wiki_maintainer", "wiki_retrieval", "wiki_retrieval.channels"]

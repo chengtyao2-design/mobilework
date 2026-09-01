@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "questions": [
+    {
+      "id": "Q01",
+      "question": "一般计税方法下，应纳税额如何计算？当期进项税额大于销项税额时如何处理？",
+      "test_point": "单页事实与公式",
+      "difficulty": "low",
+      "expected_paths": ["wiki/concepts/一般计税方法.md"],
+      "evidence_note": "应给出销项减进项的公式，并说明留抵税额可结转或申请退还。"
+    },
+    {
+      "id": "Q02",
+      "question": "海尔 PBC=C 与 PBC=D 的触发条件分别是什么？两者的结果确认流程是否相同？",
+      "test_point": "单页条件辨析",
+      "difficulty": "low",
+      "expected_paths": ["wiki/concepts/PBC绩效等级量表.md"],
+      "evidence_note": "区分连续 C 不可接受与连续 C 后未改善的 D，并指出直线经理评估、二线经理审核。"
+    },
+    {
+      "id": "Q03",
+      "question": "三大全球倡议分别是什么？发展、安全、文明三个倡议各自强调哪些核心价值？",
+      "test_point": "精确术语与多要点事实",
+      "difficulty": "low",
+      "expected_paths": ["wiki/concepts/三大全球倡议.md"],
+      "evidence_note": "应列出三项倡议，并对应可持续发展、共同综合合作可持续安全、平等互鉴对话包容。"
+    },
+    {
+      "id": "Q04",
+      "question": "OEC 管理模式的核心口号是什么？现有语料没有展开哪些实施细节？",
+      "test_point": "精确术语与知识边界",
+      "difficulty": "low",
+      "expected_paths": ["wiki/concepts/OEC管理模式.md"],
+      "evidence_note": "应引用日事日毕、日清日高，并明确日清体系、考核与奖惩等细节未提供。"
+    },
+    {
+      "id": "Q05",
+      "question": "派车单制度从申请到出入厂核验包含哪些关键控制？无派车单出车如何处理？",
+      "test_point": "流程型事实检索",
+      "difficulty": "medium",
+      "expected_paths": ["wiki/concepts/派车单制度.md"],
+      "evidence_note": "应涵盖事前填单审批、守卫签注与查点、管理部查核及违规惩处。"
+    },
+    {
+      "id": "Q06",
+      "question": "古树与名木的认定标准、树龄要求和保护方式分别有什么差异？",
+      "test_point": "双页面对比",
+      "difficulty": "medium",
+      "expected_paths": ["wiki/concepts/古树定义.md", "wiki/concepts/名木定义.md"],
+      "evidence_note": "应区分古树 100 年门槛和商品林排除，与名木的价值认定、无树龄限制和一级保护。"
+    },
+    {
+      "id": "Q07",
+      "question": "部门考核与员工考核在对象、周期、评价流程和薪酬传导方面有何不同？",
+      "test_point": "结构化对比页面",
+      "difficulty": "medium",
+      "expected_paths": ["wiki/comparisons/部门考核与员工考核双轨对比.md"],
+      "evidence_note": "应覆盖部门与全员、年度或半年与季度或年度、流程差异、间接与直接薪酬传导。"
+    },
+    {
+      "id": "Q08",
+      "question": "海洋渔业产业集群的五种属性是什么？它与农业或工业产业集群的特殊性在哪里？",
+      "test_point": "概念框架与关系解释",
+      "difficulty": "medium",
+      "expected_paths": ["wiki/concepts/海洋渔业产业集群五属性.md"],
+      "evidence_note": "应列出自然、经济、空间、资源、生态五属性，并说明陆地与海域、生态依赖等特征。"
+    },
+    {
+      "id": "Q09",
+      "question": "海洋无脊椎动物细胞培养难以建系的共性障碍有哪些？主要解决方向是什么？",
+      "test_point": "长页面多要点召回",
+      "difficulty": "medium",
+      "expected_paths": ["wiki/concepts/海洋无脊椎动物细胞培养瓶颈.md"],
+      "evidence_note": "应至少覆盖特殊营养、血清成分、原生动物污染，以及专用培养基、基质或悬浮、永生化、杀原生动物方向。"
+    },
+    {
+      "id": "Q10",
+      "question": "关于山东海洋渔业产业集群是否已经形成，现有语料为何不能给出单一结论？",
+      "test_point": "冲突证据与不确定性表达",
+      "difficulty": "high",
+      "expected_paths": ["wiki/queries/山东海洋渔业产业集群是否已经形成.md"],
+      "evidence_note": "应并列 2012 与 2013 研究的冲突结论，并说明方法、时间和范围差异。"
+    },
+    {
+      "id": "Q11",
+      "question": "现有语料能否证明 PBC 体系已经取代 OEC 管理模式，或两者在不同层级并存？请说明证据边界。",
+      "test_point": "负向问题与知识缺口",
+      "difficulty": "high",
+      "expected_paths": ["wiki/queries/PBC体系与OEC管理模式的关系.md", "wiki/concepts/OEC管理模式.md", "wiki/concepts/PBC绩效等级量表.md"],
+      "evidence_note": "应明确现有语料不足以裁决，并点出制度沿革、年份、衔接机制等缺失。"
+    },
+    {
+      "id": "Q12",
+      "question": "人力资源需求预测有哪些四种方法？比率分析的关键假设和局限是什么？",
+      "test_point": "术语枚举与限定条件",
+      "difficulty": "low",
+      "expected_paths": ["wiki/concepts/人力资源需求预测方法.md"],
+      "evidence_note": "应列出趋势、比率、散点或回归、主管判断，并指出生产率不变假设。"
+    },
+    {
+      "id": "Q13",
+      "question": "主管以上职位的初试、复试、终试最终决定权分别归谁？",
+      "test_point": "表格精确定位",
+      "difficulty": "low",
+      "expected_paths": ["wiki/concepts/面试三级审批权限矩阵.md"],
+      "evidence_note": "应依次为人资行政部经理、部门负责人、总经理。"
+    },
+    {
+      "id": "Q14",
+      "question": "差旅费分为哪三类？半日旅费和乘夜车往返的住宿费如何计付？",
+      "test_point": "制度细则与例外",
+      "difficulty": "low",
+      "expected_paths": ["wiki/concepts/差旅费科目与计费规则.md"],
+      "evidence_note": "应列出交通、膳杂、特别费用，并说明半日按二分之一、夜车不另支宿费。"
+    },
+    {
+      "id": "Q15",
+      "question": "2023 年反间谍法对间谍行为定义有哪些代表性扩张？",
+      "test_point": "法律概念多要点召回",
+      "difficulty": "medium",
+      "expected_paths": ["wiki/concepts/间谍行为定义.md"],
+      "evidence_note": "应包含投靠、数据与主体扩张、关键信息基础设施网络攻击、针对第三国的域外适用。"
+    },
+    {
+      "id": "Q16",
+      "question": "抛石机如何从力矩平衡转为发射？其最大攻击距离是多少？",
+      "test_point": "机理解释与数值事实",
+      "difficulty": "medium",
+      "expected_paths": ["wiki/concepts/抛石机原理.md"],
+      "evidence_note": "应说明解除约束后长臂加速、依惯性抛出，并给出最远约 200 米。"
+    },
+    {
+      "id": "Q17",
+      "question": "企业文化五类型分别是什么？哪一类强调冒险、创新和高自由度？",
+      "test_point": "分类检索",
+      "difficulty": "low",
+      "expected_paths": ["wiki/concepts/企业文化五类型学.md"],
+      "evidence_note": "应列出五种类型，并识别垒球队型。"
+    },
+    {
+      "id": "Q18",
+      "question": "人才流动可能让原公司受益的三种机制是什么？在什么情况下会反转为风险？",
+      "test_point": "因果关系与边界条件",
+      "difficulty": "medium",
+      "expected_paths": ["wiki/concepts/人才流动三大受益机制.md"],
+      "evidence_note": "应涵盖竞争情报、品牌影响、新鲜血液，以及过度流动造成混乱、信息超载、士气和品牌风险。"
+    },
+    {
+      "id": "Q19",
+      "question": "在对外关系职权分工中，缔结条约与批准或废除条约分别归谁？外交部与省级地方政府各受哪些职权约束？",
+      "test_point": "多机构关系与实体链接",
+      "difficulty": "high",
+      "expected_paths": ["wiki/comparisons/对外关系职权分工对比.md", "wiki/entities/国务院.md", "wiki/entities/全国人民代表大会常务委员会.md", "wiki/entities/外交部.md"],
+      "evidence_note": "应说明国务院缔结、全国人大常委会批准废除，外交部统筹执行，地方以中央授权为前提。"
+    },
+    {
+      "id": "Q20",
+      "question": "平衡计分卡在福特六和案例中的作用是什么？现有语料未提供哪些落地细节？",
+      "test_point": "事实与缺失信息识别",
+      "difficulty": "low",
+      "expected_paths": ["wiki/concepts/平衡计分卡.md"],
+      "evidence_note": "应指出其将人力资源绩效具体化并兼顾财务和非财务维度；指标、权重、周期等未给出。"
+    }
+  ]
+}

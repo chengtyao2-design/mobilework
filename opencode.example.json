@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "wiki-retrieval": {
+      "type": "local",
+      "command": [".venv/bin/python", "-m", "wiki_retrieval.server"],
+      "enabled": true,
+      "environment": {
+        "WIKI_RETRIEVAL_PROJECT": "."
+      }
+    }
+  }
+}
