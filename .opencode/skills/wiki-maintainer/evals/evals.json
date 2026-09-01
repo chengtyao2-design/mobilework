@@ -1,0 +1,38 @@
+{
+  "skill_name": "wiki-maintainer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "在一个已初始化的项目里，raw/sources/attention.md 新增了一份资料。同步 Wiki，生成有精确来源血缘的 source/reference 页面与可复用 concept 页面，并完成安全提交。",
+      "expected_output": "使用 staging 和 record-source/commit；页面满足 frontmatter contract，active wiki 和 manifest 一致。",
+      "files": [],
+      "expectations": [
+        "模型只在 staging 中生成页面，再通过 commit 发布",
+        "每页包含 wiki_managed、source_ids 与 sources",
+        "manifest、index 和 log 在提交后保持一致"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "两个 source 共同支持一个 Wiki 页面。用户删除其中一个 source 后进行同步。保留仍被另一个 source 支持的页面，去除失效来源独有的论断，不永久删除内容。",
+      "expected_output": "共享页按幸存 source 语义重写；删除的 source ID/路径消失；提交成功且无误删。",
+      "files": [],
+      "expectations": [
+        "不是只删除 frontmatter，而是根据幸存 source 重写正文",
+        "共享页保留且只引用 active source",
+        "独占孤儿页只进入可恢复 trash"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "用户把 source 重命名，同时在批处理开始后手工编辑了受影响 Wiki 页面。同步系统应保留 source 身份，并拒绝覆盖并发人工编辑。",
+      "expected_output": "唯一 hash move 保持 source_id；commit 检测 active hash 冲突并停止。",
+      "files": [],
+      "expectations": [
+        "移动 source 不创建重复身份",
+        "精确更新 source path，不做模糊替换",
+        "并发编辑触发 commit refused，人工版本仍在"
+      ]
+    }
+  ]
+}
