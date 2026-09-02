@@ -10,16 +10,23 @@ metadata:
 
 Answer using only the `mobile-retrieval` MCP server. This tier decomposes the question and gathers corroborated evidence over at most two retrieval rounds.
 
+If the message is a greeting, UI/help request, or otherwise does not ask about the local knowledge base, do not retrieve; answer it normally and ignore the planning prerequisite below.
+
+## Required prerequisite
+
+`wiki-retrieval-planner` must already be loaded before this Skill. If it is absent, load it before any retrieval call. Execute its plan within the Medium two-round budget; this Skill, not the planner, owns tool execution and the final answer.
+
 ## Procedure
 
-1. **Decompose.** Restate the question as a short list of verifiable information points (the distinct facts, definitions, or relationships the answer requires). Preserve the original entities, numbers, dates, and quoted phrases.
-2. **Round 1 — three-channel recall.** For each information point, issue a retrieval call spanning all channels:
+1. **Adopt the plan.** Use the planner's verifiable information points, rewritten queries, routes, evidence requirements, and stop condition. Preserve the original entities, numbers, dates, and quoted phrases.
+2. **Round 1 — execute the planned routes.** For each information point, call the tool selected by the planner:
 
-   ```
-   mobile-retrieval_retrieve(query=<point + keywords>, scope="wiki", channels=["vector","keyword","graph"], top_k=5, include_content=true)
-   ```
+   - Ordinary fact/explanation/comparison: `mobile-retrieval_retrieve(query=<point + keywords>, scope=<planned scope>, channels=<planned channels>, top_k=5, include_content=true)`.
+   - Provenance/original wording: use `scope="source"` (the vector and graph channels do not cover sources, so use specific keyword-bearing queries).
+   - Relationship from a known page: `mobile-retrieval_graph_neighbors(seed=<page_id or title>, depth=1, top_k=10)`.
+   - Structure/inventory or an unknown graph seed: call `mobile-retrieval_knowledge_tree()` once.
 
-   For a point about provenance or original wording, add a `scope="source"` call (the graph channel is auto-disabled for source scope; and since the vector index covers wiki pages only, source recall is keyword-driven — use specific terms/names). For a point about relationships or neighbours, you may instead call `mobile-retrieval_graph_neighbors(seed=<page_id or title>, depth=1, top_k=10)`.
+   Do not replace a planned graph/tree route with a generic retrieve call merely for convenience.
 3. **Judge sufficiency.** Inspect every returned snippet, content block, ID, and relationship. Mark each information point as supported or unsupported.
 4. **Round 2 — targeted supplement (optional).** For still-unsupported points only, make one more focused round with a sharper query or a complementary channel/scope. Do not exceed two rounds total, and do not re-issue a query that only cosmetically differs from one already run.
 

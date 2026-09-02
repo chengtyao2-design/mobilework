@@ -10,6 +10,8 @@ metadata:
 
 Answer using only the `mobile-retrieval` MCP server. One hybrid recall (vector + keyword, fused by RRF); no decomposition, no fallback loop.
 
+If the message is a greeting, UI/help request, or otherwise does not ask about the local knowledge base, do not retrieve; answer it normally.
+
 ## Procedure
 
 1. Preserve the original question. Rewrite it into one concise retrieval query and extract 3–8 discriminative keywords (separate Chinese keywords with spaces; keep exact technical names such as RRF, LanceDB, Qwen3). Fold the keywords into the query string.

@@ -4,8 +4,6 @@ import pytest
 
 from wiki_maintainer.cli import (
     _compact_event,
-    _ensure_json_events,
-    _event_progress,
     _pending_chunk,
     _pending_summary,
 )
@@ -72,32 +70,3 @@ def test_pending_chunk_returns_only_requested_body() -> None:
     assert "chunks" not in selected
     with pytest.raises(ValueError, match="chunk ordinal 2"):
         _pending_chunk(event, 2)
-
-
-def test_ensure_json_events_adds_opencode_stream_format_once() -> None:
-    command = ["opencode", "run", "--dir", ".", "prompt"]
-
-    assert _ensure_json_events(command)
-    assert command == ["opencode", "run", "--format", "json", "--dir", ".", "prompt"]
-    assert _ensure_json_events(command)
-    assert command.count("--format") == 1
-
-
-def test_event_progress_reports_invalid_tool_call() -> None:
-    event = {
-        "type": "tool_use",
-        "part": {
-            "type": "tool",
-            "tool": "invalid",
-            "state": {
-                "status": "completed",
-                "input": {"tool": "unknown", "error": "Tool execution aborted"},
-            },
-        },
-    }
-
-    label, error, final_text = _event_progress(event)
-
-    assert label == "Using unknown"
-    assert error == "Tool execution aborted"
-    assert final_text is None

@@ -5,11 +5,7 @@ import importlib.metadata
 import importlib.util
 import json
 import os
-import shutil
-import subprocess
 import sys
-import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +21,7 @@ from .core import (
     paths_for,
     pending_work_order,
     prepare,
+    preview_status,
     record_source,
     restore_trash,
     rewrite_moved_paths,
@@ -181,177 +178,6 @@ def _doctor_summary(report: dict[str, Any]) -> None:
     ansi.note(f"\n  {ansi.paint('overall: ' + overall, ansi.BOLD + ansi.status_color(overall))}")
 
 
-def _ensure_json_events(command: list[str]) -> bool:
-    executable = Path(command[0]).stem.lower()
-    if executable != "opencode" or len(command) < 2 or command[1].lower() != "run":
-        return False
-    if "--format" not in command:
-        command[2:2] = ["--format", "json"]
-    return True
-
-
-def _event_progress(event: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
-    """Return (progress label, error, final text) for one OpenCode JSON event."""
-    kind = str(event.get("type", ""))
-    part = event.get("part")
-    if not isinstance(part, dict):
-        return ("Thinking…" if kind == "step_start" else None, None, None)
-    if kind == "text" or part.get("type") == "text":
-        text = part.get("text")
-        return "Finalizing…", None, text if isinstance(text, str) else None
-    if kind != "tool_use" and part.get("type") != "tool":
-        return ("Thinking…" if kind in {"step_start", "step_finish"} else None, None, None)
-
-    state = part.get("state") if isinstance(part.get("state"), dict) else {}
-    tool = str(part.get("tool") or "tool")
-    input_value = state.get("input") if isinstance(state.get("input"), dict) else {}
-    effective_tool = str(input_value.get("tool") or tool)
-    title = state.get("title")
-    if not isinstance(title, str) or not title.strip():
-        if effective_tool == "skill":
-            title = str(input_value.get("name") or "skill")
-        elif effective_tool in {"read", "write", "edit"}:
-            title = str(input_value.get("filePath") or input_value.get("path") or effective_tool)
-        elif effective_tool == "bash":
-            title = str(input_value.get("command") or "command")
-        else:
-            title = effective_tool
-    title = title.replace("\r", " ").replace("\n", " ").strip()
-    if len(title) > 72:
-        title = title[:69] + "…"
-    verbs = {
-        "skill": "Loading",
-        "read": "Reading",
-        "write": "Writing",
-        "edit": "Editing",
-        "bash": "Running",
-        "todowrite": "Planning",
-        "task": "Delegating",
-    }
-    label = f"{verbs.get(effective_tool, 'Using')} {title}"
-
-    status_value = str(state.get("status") or "")
-    error = ""
-    if isinstance(input_value.get("error"), str):
-        error = input_value["error"]
-    elif isinstance(state.get("error"), str):
-        error = state["error"]
-    elif status_value in {"error", "failed"} and isinstance(state.get("output"), str):
-        error = state["output"]
-    if tool in {"invalid", "unknown"} or effective_tool in {"invalid", "unknown"}:
-        error = error or f"model called unavailable tool: {effective_tool}"
-    return label, error[:500] if error else None, None
-
-
-def _terminate_agent(process: subprocess.Popen[str]) -> None:
-    if process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
-
-
-def run_agent(root: Path, batch_id: str) -> dict[str, Any]:
-    config = load_config(root)
-    prompt = (
-        "Use the wiki-maintainer skill to process the existing pending batch "
-        f"{batch_id}. Follow its staging and commit protocol. Do not ask for confirmation."
-    )
-    command = [str(part).replace("{root}", str(root)).replace("{prompt}", prompt) for part in config["watch"]["agent_command"]]
-    executable = shutil.which(command[0])
-    if not executable:
-        raise RuntimeError(f"OpenCode executable not found: {command[0]}")
-    command[0] = executable
-    structured = _ensure_json_events(command)
-
-    work = pending_work_order(root) or {}
-    batch_dir = (root / str(work.get("result_path", f".wiki-state/batches/{batch_id}/result.json"))).parent
-    run_dir = batch_dir / "agent-runs"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    suffix = f"{time.time_ns() % 1_000_000_000:09d}"
-    event_path = run_dir / f"{stamp}-{suffix}.jsonl"
-    stderr_path = run_dir / f"{stamp}-{suffix}.stderr.log"
-    errors: list[str] = []
-    final_text = ""
-    started = time.monotonic()
-    spinner = ansi.Spinner(f"Starting agent for batch {batch_id}").start()
-    try:
-        process = subprocess.Popen(
-            command,
-            cwd=root,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            bufsize=1,
-        )
-    except OSError as error:
-        spinner.finish(f"Could not start agent: {error}", "fail")
-        raise RuntimeError(f"Could not start OpenCode: {error}") from error
-
-    def drain_stderr() -> None:
-        assert process.stderr is not None
-        with stderr_path.open("w", encoding="utf-8") as destination:
-            for line in process.stderr:
-                destination.write(line)
-                destination.flush()
-
-    stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
-    stderr_thread.start()
-    try:
-        assert process.stdout is not None
-        with event_path.open("w", encoding="utf-8") as destination:
-            for line in process.stdout:
-                destination.write(line)
-                destination.flush()
-                if not structured:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                label, error, text_value = _event_progress(event)
-                if label:
-                    spinner.update(label)
-                if error and error not in errors:
-                    errors.append(error)
-                if text_value:
-                    final_text = text_value
-        code = process.wait()
-    except KeyboardInterrupt:
-        _terminate_agent(process)
-        spinner.finish("Agent interrupted; pending batch preserved", "warn")
-        raise
-    finally:
-        stderr_thread.join(timeout=5)
-
-    pending = pending_work_order(root) is not None
-    duration = time.monotonic() - started
-    if code != 0:
-        spinner.finish(f"Agent exited with code {code} after {duration:.1f}s", "fail")
-    elif errors:
-        spinner.finish(f"Agent stopped with {len(errors)} tool error(s); batch preserved", "fail")
-    elif pending:
-        spinner.finish(f"Agent finished without committing after {duration:.1f}s", "warn")
-    else:
-        spinner.finish(f"Batch committed in {duration:.1f}s", "ok")
-    return {
-        "exit_code": code,
-        "errors": errors,
-        "final_text": final_text,
-        "event_log": event_path.relative_to(root).as_posix(),
-        "stderr_log": stderr_path.relative_to(root).as_posix(),
-        "duration_seconds": round(duration, 3),
-    }
-
-
 def _maybe_reindex(root: Path) -> dict[str, Any]:
     """提交成功后重建检索索引。
 
@@ -370,78 +196,6 @@ def _maybe_reindex(root: Path) -> dict[str, Any]:
     except Exception as error:
         return {"status": "failed", "error": f"{type(error).__name__}: {error}"}
     return {"status": "ok"}
-
-
-def sync_once(root: Path, invoke_agent: bool) -> dict[str, Any]:
-    work = prepare(root)
-    if work is None:
-        return {"status": "unchanged"}
-    if not invoke_agent:
-        return {"status": "prepared", "batch_id": work["batch_id"], "work_order": work}
-    agent = run_agent(root, work["batch_id"])
-    code = int(agent["exit_code"])
-    current = pending_work_order(root)
-    return {
-        "status": "committed" if current is None and code == 0 else "agent_failed_or_incomplete",
-        "batch_id": work["batch_id"],
-        "agent_exit_code": code,
-        "agent_errors": agent["errors"],
-        "agent_event_log": agent["event_log"],
-        "agent_stderr_log": agent["stderr_log"],
-        "duration_seconds": agent["duration_seconds"],
-        "pending": current is not None,
-    }
-
-
-def watch(root: Path, invoke_agent: bool, once: bool = False) -> int:
-    config = load_config(root)
-    interval = float(config["watch"]["interval_seconds"])
-    settle = float(config["watch"]["settle_seconds"])
-    retry = float(config["watch"]["retry_seconds"])
-    last_signature: str | None = None
-    stable_since = time.monotonic()
-    last_agent_attempt = 0.0
-    print(f"Watching {root / config['sources_dir']} (Ctrl+C to stop)", file=sys.stderr, flush=True)
-    while True:
-        snapshot = status(root)
-        signature = json.dumps(
-            {"changes": snapshot["unprepared_changes"], "pending": snapshot["pending_batch"]},
-            sort_keys=True,
-        )
-        if signature != last_signature:
-            last_signature = signature
-            stable_since = time.monotonic()
-        elif snapshot["pending_batch"] and invoke_agent and time.monotonic() - last_agent_attempt >= retry:
-            agent = run_agent(root, snapshot["pending_batch"])
-            code = int(agent["exit_code"])
-            last_agent_attempt = time.monotonic()
-            remaining = pending_work_order(root)
-            result = {
-                "status": "committed" if code == 0 and remaining is None else "agent_failed_or_incomplete",
-                "batch_id": snapshot["pending_batch"],
-                "agent_exit_code": code,
-                "agent_errors": agent["errors"],
-                "agent_event_log": agent["event_log"],
-                "agent_stderr_log": agent["stderr_log"],
-                "duration_seconds": agent["duration_seconds"],
-                "pending": remaining is not None,
-            }
-            print(json.dumps(result, ensure_ascii=False), flush=True)
-            _human_line(str(result["status"]), f"batch {result['batch_id']} agent_exit={code}")
-            if once:
-                return 0 if result["status"] == "committed" else 3
-        elif snapshot["pending_batch"] and not invoke_agent and once:
-            return 0
-        elif snapshot["pending_batch"] is None and snapshot["unprepared_changes"] and time.monotonic() - stable_since >= settle:
-            result = sync_once(root, invoke_agent)
-            print(json.dumps(result, ensure_ascii=False), flush=True)
-            _human_line(str(result["status"]), f"batch {result.get('batch_id', '-')}")
-            stable_since = time.monotonic()
-            if once:
-                return 0 if result["status"] in {"prepared", "committed"} else 1
-        elif once and not snapshot["unprepared_changes"]:
-            return 0
-        time.sleep(interval)
 
 
 def _check(name: str, state: str, detail: str) -> dict[str, str]:
@@ -655,6 +409,7 @@ def parser() -> argparse.ArgumentParser:
     sub = result.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
     sub.add_parser("status")
+    sub.add_parser("preview", help=argparse.SUPPRESS)
     sub.add_parser("prepare")
     pending = sub.add_parser("pending")
     pending_view = pending.add_mutually_exclusive_group()
@@ -677,11 +432,11 @@ def parser() -> argparse.ArgumentParser:
     cancel.add_argument("--batch", required=True)
     restore = sub.add_parser("restore-trash")
     restore.add_argument("--batch", required=True)
-    sync = sub.add_parser("sync")
-    sync.add_argument("--no-agent", action="store_true")
-    watcher = sub.add_parser("watch")
-    watcher.add_argument("--no-agent", action="store_true")
-    watcher.add_argument("--once", action="store_true")
+    legacy_sync = sub.add_parser("sync", help=argparse.SUPPRESS)
+    legacy_sync.add_argument("--no-agent", action="store_true", help=argparse.SUPPRESS)
+    legacy_watch = sub.add_parser("watch", help=argparse.SUPPRESS)
+    legacy_watch.add_argument("--no-agent", action="store_true", help=argparse.SUPPRESS)
+    legacy_watch.add_argument("--once", action="store_true", help=argparse.SUPPRESS)
     health = sub.add_parser("doctor")
     health.add_argument("--probe", action="store_true", help="Also probe embedding endpoint connectivity")
     return result
@@ -701,13 +456,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     args = parser().parse_args(argv)
     root = _root(args.root)
-    if args.command in {"doctor", "watch"}:
+    if args.command == "doctor":
         _splash()
     try:
         if args.command == "init":
             emit({"status": "initialized", "root": str(initialize(root).root)})
         elif args.command == "status":
             emit(status(root))
+        elif args.command == "preview":
+            emit(preview_status(root))
         elif args.command == "prepare":
             work = prepare(root)
             emit({"status": "unchanged"} if work is None else work)
@@ -747,13 +504,18 @@ def main(argv: list[str] | None = None) -> int:
             emit(abort(root, args.batch))
         elif args.command == "restore-trash":
             emit(restore_trash(root, args.batch))
-        elif args.command == "sync":
-            outcome = sync_once(root, not args.no_agent)
-            emit(outcome)
-            if outcome["status"] == "agent_failed_or_incomplete":
-                return 3
-        elif args.command == "watch":
-            return watch(root, not args.no_agent, args.once)
+        elif args.command in {"sync", "watch"}:
+            print(
+                json.dumps(
+                    {
+                        "status": "migrated",
+                        "error": f"wiki {args.command} 已停用；请运行 mobilework，然后在 TUI 中使用 /sync",
+                    },
+                    ensure_ascii=False,
+                ),
+                file=sys.stderr,
+            )
+            return 2
         elif args.command == "doctor":
             report = doctor(root, args.probe)
             emit(report)

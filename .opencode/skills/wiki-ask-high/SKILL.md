@@ -10,6 +10,12 @@ metadata:
 
 Answer using only the `mobile-retrieval` MCP server. This tier plans its own retrieval loop over all three tools, up to five rounds, stopping as soon as the evidence is sufficient.
 
+If the message is a greeting, UI/help request, or otherwise does not ask about the local knowledge base, do not retrieve; answer it normally and ignore the planning prerequisite below.
+
+## Required prerequisite
+
+`wiki-retrieval-planner` must already be loaded before this Skill. If it is absent, load it before any retrieval call. Start from its plan, then adapt the remaining evidence gaps after each result. This Skill, not the planner, owns tool execution and the final answer.
+
 ## Available tools
 
 - `mobile-retrieval_retrieve(query, scope="wiki"|"source"|"both", channels=["vector","keyword","graph"], top_k=10, rrf_k=60, include_content=false, verbose=false)` — hybrid recall; graph channel auto-disabled for `scope="source"`. Empty results is a valid "no hit", not an error. Note: the vector index covers wiki pages only, so `scope="source"` recall is keyword-driven — prefer specific terms/names in the query when searching sources.
@@ -18,7 +24,7 @@ Answer using only the `mobile-retrieval` MCP server. This tier plans its own ret
 
 ## Loop policy
 
-1. **Plan.** Decompose the question into sub-goals and pick the tool that most directly serves the first gap. Start with `knowledge_tree` only when you need structure or a seed you do not yet have.
+1. **Start from the plan.** Use the planner's sub-goals and first route. Start with `knowledge_tree` only when the plan needs structure or a seed that is not yet known.
 2. **Act, then reflect.** After each call, inspect all returned content, snippets, IDs, and relationships. Update which sub-goals are now supported. Choose the next tool to close the largest remaining gap — e.g. `retrieve(scope="source")` for provenance, `graph_neighbors` to follow a relationship, `retrieve(scope="both")` to widen coverage.
 3. **Escalate deliberately.** Set `include_content=true` when you need prose; raise `top_k` or switch `scope` when coverage is thin. Set `verbose=true` only for channel-ablation or latency questions.
 4. **Detect duplicates.** The server flags a repeated `(scope, channels, normalized query)` call with `duplicate:true` and a `previous` pointer. If you see it, you are spinning — change the tool, scope, seed, or query substance, or stop and answer. Never repeat a call for cosmetic reasons.

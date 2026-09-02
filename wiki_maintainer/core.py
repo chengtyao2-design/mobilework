@@ -36,21 +36,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # 二进制原件由解析组转成 md 后落到 raw/sources，构建侧只吃纯文本
     "include_extensions": [".md", ".markdown", ".txt"],
     "ignore_names": [".DS_Store", "Thumbs.db"],
-    "watch": {
-        "interval_seconds": 2.0,
-        "settle_seconds": 1.0,
-        "retry_seconds": 30.0,
-        "agent_command": [
-            "opencode",
-            "run",
-            "--model",
-            "openrouter/qwen/qwen3.8-flash",
-            "--format",
-            "json",
-            "--dir",
-            "{root}",
-            "{prompt}",
-        ],
+    "assistant": {
+        "model": "openrouter/qwen/qwen3.8-flash",
     },
 }
 
@@ -110,8 +97,8 @@ def load_config(root: Path) -> dict[str, Any]:
     path = root / "wiki.config.json"
     user = load_json(path, {})
     config = dict(DEFAULT_CONFIG)
-    config.update({key: value for key, value in user.items() if key != "watch"})
-    config["watch"] = {**DEFAULT_CONFIG["watch"], **user.get("watch", {})}
+    config.update({key: value for key, value in user.items() if key != "assistant"})
+    config["assistant"] = {**DEFAULT_CONFIG["assistant"], **user.get("assistant", {})}
     return config
 
 
@@ -947,25 +934,43 @@ def abort(root: Path, batch_id: str) -> dict[str, Any]:
         return {"status": "aborted", "batch_id": batch_id, "preserved_at": str(abandoned)}
 
 
-def status(root: Path) -> dict[str, Any]:
-    paths = initialize(root)
+def preview_status(root: Path) -> dict[str, Any]:
+    """Return a read-only change summary suitable for the interactive /sync dialog."""
+    paths = paths_for(root)
     manifest = load_json(paths.manifest, empty_manifest())
     pending = pending_work_order(root)
     config = load_config(paths.root)
     current = _source_snapshot(paths, config)
-    events = _compute_events(
-        manifest,
-        current,
-        int(config.get("semantic_revision", 1)),
-    ) if pending is None else []
+    events = (
+        list(pending.get("events", []))
+        if pending is not None
+        else _compute_events(
+            manifest,
+            current,
+            int(config.get("semantic_revision", 1)),
+        )
+    )
+    counts = {name: 0 for name in ("new", "modified", "moved", "restored", "deleted")}
+    for event in events:
+        kind = str(event.get("kind", ""))
+        if kind in counts:
+            counts[kind] += 1
     return {
         "root": str(paths.root),
         "active_sources": sum(1 for item in manifest["sources"].values() if item.get("state") == "active"),
         "managed_pages": len(manifest.get("pages", {})),
         "pending_batch": pending["batch_id"] if pending else None,
-        "unprepared_changes": len(events),
+        "pending_count": 1 if pending else 0,
+        "unprepared_changes": 0 if pending else len(events),
+        "change_counts": counts,
+        "change_total": len(events),
         "last_batch": manifest.get("last_batch"),
     }
+
+
+def status(root: Path) -> dict[str, Any]:
+    initialize(root)
+    return preview_status(root)
 
 
 def rewrite_moved_paths(root: Path, batch_id: str) -> int:

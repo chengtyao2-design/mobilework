@@ -3,10 +3,10 @@
   "mcp": {
     "wiki-retrieval": {
       "type": "local",
-      "command": [".venv/bin/python", "-m", "wiki_retrieval.server"],
+      "command": ["{env:MOBILEWORK_PYTHON}", "-m", "wiki_retrieval.server"],
       "enabled": true,
       "environment": {
-        "WIKI_RETRIEVAL_PROJECT": "."
+        "WIKI_RETRIEVAL_PROJECT": "{env:MOBILEWORK_ROOT}"
       }
     }
   }

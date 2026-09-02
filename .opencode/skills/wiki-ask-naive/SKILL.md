@@ -10,6 +10,8 @@ metadata:
 
 Answer using only the `mobile-retrieval` MCP server. This is the shallowest tier: exactly one vector recall, no decomposition, no fallback.
 
+If the message is a greeting, UI/help request, or otherwise does not ask about the local knowledge base, do not retrieve; answer it normally.
+
 ## Procedure
 
 1. Keep the user's original question intact — its entities, acronyms, numbers, dates, and quoted phrases. Rewrite it into one concise retrieval query, removing only conversational filler.

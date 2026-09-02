@@ -26,6 +26,7 @@ dev = [
 
 [project.scripts]
 wiki = "wiki_maintainer.cli:main"
+mobilework = "wiki_maintainer.launcher:main"
 
 [build-system]
 requires = ["setuptools>=68"]

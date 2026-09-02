@@ -1,0 +1,14 @@
+{
+  "name": "mobilework-opencode-plugin",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./server": "./index.ts",
+    "./tui": "./tui.ts"
+  },
+  "engines": {
+    "opencode": ">=1.18.25"
+  }
+}
