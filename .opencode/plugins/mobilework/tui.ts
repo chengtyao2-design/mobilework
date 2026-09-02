@@ -100,18 +100,47 @@ const mobileworkTui: TuiPlugin = async (api) => {
   }
 
   const watchLongResponse = (sessionID: string) => {
-    clearWaitTimers(sessionID)
+    // One watchdog per busy period: repeated busy events must not postpone it.
+    if (waitTimers.has(sessionID)) return
     waitTimers.set(sessionID, [
       setTimeout(() => api.ui.toast({
         title: "Mobilework",
         message: "仍在整理答案；可以继续等待，或按 Esc 安全中止",
         variant: "info",
       }), 45_000),
-      setTimeout(() => api.ui.toast({
-        title: "响应时间较长",
-        message: "可以按 Esc 中止后重试；检索等级不会自动改变",
-        variant: "warning",
-      }), 90_000),
+      setTimeout(async () => {
+        clearWaitTimers(sessionID)
+        try {
+          await api.client.session.abort({ sessionID, directory: root })
+        } catch (error) {
+          api.ui.toast({ title: "无法停止超时响应", message: String(error), variant: "error" })
+          return
+        }
+
+        const dialog = api.ui.dialog
+        dialog.replace(() => api.ui.DialogConfirm({
+          title: "响应超时，已停止",
+          message: "是否直接使用刚才已经取得的资料重新生成回答？不会再次检索。",
+          onCancel: () => dialog.clear(),
+          onConfirm: async () => {
+            dialog.clear()
+            try {
+              await api.client.session.promptAsync({
+                sessionID,
+                directory: root,
+                agent: "mobilework",
+                parts: [{
+                  type: "text",
+                  text: "[MOBILEWORK_RETRY_ANSWER_ONLY]\n请只使用本会话最近一次已完成检索返回的资料直接回答上一问题；不要再次检索。",
+                }],
+              })
+              api.ui.toast({ title: "Mobilework", message: "正在使用已有资料重新生成回答", variant: "info" })
+            } catch (error) {
+              api.ui.toast({ title: "无法重新生成回答", message: String(error), variant: "error" })
+            }
+          },
+        }))
+      }, 90_000),
     ])
   }
 
@@ -119,7 +148,9 @@ const mobileworkTui: TuiPlugin = async (api) => {
     if (event.properties.status.type === "busy") watchLongResponse(event.properties.sessionID)
     else clearWaitTimers(event.properties.sessionID)
   })
-  const stopIdleWatch = api.event.on("session.idle", (event) => clearWaitTimers(event.properties.sessionID))
+  const stopIdleWatch = api.event.on("session.idle", (event) => {
+    clearWaitTimers(event.properties.sessionID)
+  })
   const stopErrorWatch = api.event.on("session.error", (event) => {
     if (event.properties.sessionID) clearWaitTimers(event.properties.sessionID)
   })

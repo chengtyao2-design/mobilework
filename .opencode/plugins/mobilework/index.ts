@@ -6,6 +6,7 @@ type Tier = "naive" | "low" | "medium" | "high"
 
 const TIERS = new Set<Tier>(["naive", "low", "medium", "high"])
 const SYNC_MARKER = "[MOBILEWORK_SYNC_CONFIRMED]"
+const RETRY_ANSWER_MARKER = "[MOBILEWORK_RETRY_ANSWER_ONLY]"
 const MANAGED_RETRIEVAL_SKILLS = new Set([
   "wiki-ask-naive",
   "wiki-ask-low",
@@ -44,6 +45,7 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
   const root = process.env.MOBILEWORK_ROOT || directory || process.cwd()
   const skillCache = new Map<string, string>()
   const syncSessions = new Set<string>()
+  const retryAnswerSessions = new Set<string>()
   const nonMobileworkSessions = new Set<string>()
 
   const load = (name: string): string => {
@@ -61,9 +63,18 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
       else if (input.agent === "mobilework") nonMobileworkSessions.delete(input.sessionID)
       if (text.includes(SYNC_MARKER)) syncSessions.add(input.sessionID)
       else syncSessions.delete(input.sessionID)
+      if (text.includes(RETRY_ANSWER_MARKER)) retryAnswerSessions.add(input.sessionID)
+      else retryAnswerSessions.delete(input.sessionID)
     },
     "experimental.chat.system.transform": async (input, output) => {
       if (input.sessionID && (syncSessions.has(input.sessionID) || nonMobileworkSessions.has(input.sessionID))) return
+
+      if (input.sessionID && retryAnswerSessions.has(input.sessionID)) {
+        output.system.push(
+          "This is a timeout recovery turn. Answer the preceding user question using only the most recent completed retrieval result already present in the conversation. Do not call any retrieval tool or repeat the lookup. If that result has no usable evidence, say so briefly.",
+        )
+        return
+      }
 
       // Read the preference at generation time. chat.message and system.transform
       // are not ordered API guarantees, so a per-session tier cache lags by one turn.
@@ -80,6 +91,9 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
       )
     },
     "tool.execute.before": async (input, output) => {
+      if (retryAnswerSessions.has(input.sessionID) && retrievalToolKind(input.tool)) {
+        throw new Error("Timeout recovery must reuse the completed retrieval result and cannot retrieve again")
+      }
       if (input.tool !== "skill") return
       const name = String(output.args?.name ?? output.args?.skill ?? "")
       if (MANAGED_RETRIEVAL_SKILLS.has(name)) {

@@ -20,6 +20,8 @@ DEFAULT_MODELS = {
     "primary": "openrouter/qwen/qwen3.8-max",
     "small": "openrouter/qwen/qwen3.7-flash",
 }
+PROVIDER_TIMEOUT_MS = 90_000
+PROVIDER_CHUNK_TIMEOUT_MS = 45_000
 
 
 class LaunchError(RuntimeError):
@@ -220,6 +222,14 @@ def write_runtime_config(root: Path, python: Path) -> Path:
         "model": models["default"],
         "small_model": models["small"],
         "enabled_providers": sorted({value.split("/", 1)[0] for value in models.values()}),
+        "provider": {
+            "openrouter": {
+                "options": {
+                    "timeout": PROVIDER_TIMEOUT_MS,
+                    "chunkTimeout": PROVIDER_CHUNK_TIMEOUT_MS,
+                }
+            }
+        },
         "tool_output": {
             "max_lines": 400,
             "max_bytes": 16000,

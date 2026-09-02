@@ -3,6 +3,14 @@
   "model": "openrouter/qwen/qwen3.8-flash",
   "small_model": "openrouter/qwen/qwen3.7-flash",
   "enabled_providers": ["openrouter"],
+  "provider": {
+    "openrouter": {
+      "options": {
+        "timeout": 90000,
+        "chunkTimeout": 45000
+      }
+    }
+  },
   "tool_output": {
     "max_lines": 400,
     "max_bytes": 16000

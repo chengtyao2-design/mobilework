@@ -125,6 +125,10 @@ def test_runtime_config_registers_references_and_tui_compatibility(tmp_path: Pat
     assert runtime["model"] == "openrouter/qwen/qwen3.8-flash"
     assert runtime["small_model"] == "openrouter/qwen/qwen3.7-flash"
     assert runtime["enabled_providers"] == ["openrouter"]
+    assert runtime["provider"]["openrouter"]["options"] == {
+        "timeout": 90_000,
+        "chunkTimeout": 45_000,
+    }
     assert runtime["tool_output"] == {"max_lines": 400, "max_bytes": 16000}
     assert cli["plugins"] == runtime["plugin"]
     assert tui["plugin"] == runtime["plugin"]
@@ -166,6 +170,12 @@ def test_plugin_autoload_order_and_tier_boundaries(repo_root: Path) -> None:
     assert 'api.event.on("session.status"' in tui
     assert "45_000" in tui
     assert "90_000" in tui
+    assert "if (waitTimers.has(sessionID)) return" in tui
+    assert "api.client.session.abort" in tui
+    assert "MOBILEWORK_RETRY_ANSWER_ONLY" in tui
+    assert "不要再次检索" in tui
+    assert "MOBILEWORK_RETRY_ANSWER_ONLY" in server
+    assert "Timeout recovery must reuse" in server
 
 
 def test_skill_tier_limits_and_planner_contract(repo_root: Path) -> None:
