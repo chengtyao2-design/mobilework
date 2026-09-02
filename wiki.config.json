@@ -21,6 +21,8 @@
     "agent_command": [
       "opencode",
       "run",
+      "--model",
+      "openrouter/qwen/qwen3.8-flash",
       "--format",
       "json",
       "--dir",
