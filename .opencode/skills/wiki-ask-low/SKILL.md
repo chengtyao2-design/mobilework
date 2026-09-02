@@ -28,7 +28,11 @@ If the message is a greeting, UI/help request, or otherwise does not ask about t
 
 - Answer the original question, not the rewritten query.
 - Treat every returned `path` as a citation identifier, never a workspace file — no `read`, grep, or shell on returned paths. Get prose from the `include_content=true` payload.
-- Cite the relative `path` with `page_id` when present. The fused ranking already blends semantic and exact-term evidence; prefer top-ranked results but read their snippets before asserting.
+- Cite sources with their human-readable document titles, never with a path or internal ID. The fused ranking already blends semantic and exact-term evidence; prefer top-ranked results but read their snippets before asserting.
 - Separate retrieved facts from inference and label inference. Never invent pages, IDs, or relationships.
 - If results are empty or off-target after inspecting all of them, say so and recommend the Medium tier (which decomposes the question and adds the graph channel). Do not open a retrieval loop here.
 - If `embedding.status` is `degraded`/`disabled`, the keyword channel still contributes; note the reduced confidence rather than failing.
+
+## User-facing boundary
+
+Do not narrate the retrieval plan or mention the tier, Skill, MCP server, tool name, channels, scope, parameters, call count, round number, or internal page/source/chunk/claim IDs. Start the lookup without a prose preamble. The final response should directly answer the question in natural language. Technical details are allowed only when the user explicitly asks to debug the retrieval system.

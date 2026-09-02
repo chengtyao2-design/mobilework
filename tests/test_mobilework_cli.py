@@ -13,6 +13,7 @@ from wiki_maintainer.launcher import (
     _version_tuple,
     build_command,
     check_python_environment,
+    model_profiles,
     validate_model_auth,
     write_runtime_config,
 )
@@ -74,6 +75,29 @@ def test_model_auth_accepts_environment_key(tmp_path: Path, monkeypatch) -> None
     assert validate_model_auth(tmp_path) == "openrouter/qwen/qwen3.8-flash"
 
 
+def test_model_profiles_support_default_primary_and_small(tmp_path: Path) -> None:
+    (tmp_path / "wiki.config.json").write_text(
+        json.dumps(
+            {
+                "assistant": {
+                    "models": {
+                        "default": "openrouter/qwen/qwen3.8-flash",
+                        "primary": "openrouter/qwen/qwen3.8-max",
+                        "small": "openrouter/qwen/qwen3.7-flash",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert model_profiles(tmp_path) == {
+        "default": "openrouter/qwen/qwen3.8-flash",
+        "primary": "openrouter/qwen/qwen3.8-max",
+        "small": "openrouter/qwen/qwen3.7-flash",
+    }
+
+
 def test_model_auth_has_actionable_error(tmp_path: Path, monkeypatch) -> None:
     _write_config(tmp_path)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
@@ -98,6 +122,9 @@ def test_runtime_config_registers_references_and_tui_compatibility(tmp_path: Pat
 
     assert set(runtime["references"]) == {"wiki", "sources", "docs"}
     assert runtime["permission"]["read"][".wiki-state/**"] == "deny"
+    assert runtime["model"] == "openrouter/qwen/qwen3.8-flash"
+    assert runtime["small_model"] == "openrouter/qwen/qwen3.7-flash"
+    assert runtime["enabled_providers"] == ["openrouter"]
     assert cli["plugins"] == runtime["plugin"]
     assert tui["plugin"] == runtime["plugin"]
 
@@ -112,6 +139,9 @@ def test_launcher_starts_one_fresh_tui_without_nested_run(tmp_path: Path) -> Non
     assert "--continue" not in command
     assert command[-2:] == ["--model", "openrouter/qwen/qwen3.8-flash"]
 
+    primary = build_command("opencode.cmd", tmp_path, "primary")
+    assert primary[-2:] == ["--model", "openrouter/qwen/qwen3.8-max"]
+
 
 def test_plugin_autoload_order_and_tier_boundaries(repo_root: Path) -> None:
     server = (repo_root / ".opencode/plugins/mobilework/index.ts").read_text(encoding="utf-8")
@@ -121,11 +151,20 @@ def test_plugin_autoload_order_and_tier_boundaries(repo_root: Path) -> None:
     assert server.index("wiki-retrieval-planner") < server.index("`wiki-ask-${tier}`")
     assert "tier === \"medium\" || tier === \"high\"" in server
     assert "Never change or silently escalate it" in server
+    assert "sessionTier" not in server
+    assert "const tier = retrievalTier(root)" in server
+    assert 'input.tool !== "skill"' in server
+    assert "MANAGED_RETRIEVAL_SKILLS" in server
+    assert 'output.title = FRIENDLY_TOOL_TITLES[kind]' in server
+    assert "MAX_TOOL_OUTPUT_CHARS" in server
     assert 'slash: { name: "retrieve"' in tui
     assert "DialogSelect<Tier>" in tui
     assert 'slash: { name: "sync"' in tui
     assert "promptAsync" in tui
     assert "opencode run" not in tui
+    assert 'api.event.on("session.status"' in tui
+    assert "45_000" in tui
+    assert "90_000" in tui
 
 
 def test_skill_tier_limits_and_planner_contract(repo_root: Path) -> None:
@@ -138,3 +177,16 @@ def test_skill_tier_limits_and_planner_contract(repo_root: Path) -> None:
     assert "at most two rounds" in medium
     assert "after five rounds" in high
     assert "duplicate:true" in high
+    for content in (medium, high):
+        assert "human-readable document titles" in content
+        assert "Do not mention the tier" in content
+        assert "independent corroboration" in content
+
+
+def test_primary_agent_blocks_conflicting_system_capabilities(repo_root: Path) -> None:
+    agent = (repo_root / ".opencode/agents/mobilework.md").read_text(encoding="utf-8")
+
+    assert "skill: deny" in agent
+    assert "webfetch: deny" in agent
+    assert "websearch: deny" in agent
+    assert "不得调用系统级 Skill" in agent

@@ -14,7 +14,7 @@ If the message is a greeting, UI/help request, or otherwise does not ask about t
 
 ## Required prerequisite
 
-`wiki-retrieval-planner` must already be loaded before this Skill. If it is absent, load it before any retrieval call. Execute its plan within the Medium two-round budget; this Skill, not the planner, owns tool execution and the final answer.
+`wiki-retrieval-planner` is injected immediately before this Skill by the Mobilework plugin. Never call the `skill` tool to load or replace it. Execute its plan within the Medium two-round budget; this Skill, not the planner, owns tool execution and the final answer.
 
 ## Procedure
 
@@ -34,6 +34,11 @@ If the message is a greeting, UI/help request, or otherwise does not ask about t
 
 - Answer the original question, weaving the per-point evidence into one coherent response.
 - Treat every returned `path` as a citation identifier, never a workspace file — no `read`, grep, or shell on returned paths. Get prose from `include_content=true` payloads.
-- Cite the relative `path` with `page_id`/`source_id`/`chunk_id` when present. Separate retrieved facts from inference and label inference explicitly. Never invent pages, IDs, relationships, or sources.
+- Cite sources with human-readable document titles. Never expose paths or page/source/chunk/claim IDs in ordinary user-facing prose. Separate retrieved facts from inference and label inference explicitly. Never invent pages, IDs, relationships, or sources.
+- Pages derived from the same original document are one source, not independent corroboration. Describe them as multiple passages from the same source.
 - If after two rounds some information points remain unsupported, answer what the evidence supports, state the specific gap, and recommend the High tier for open-ended follow-up. Do not keep looping.
 - Mention `embedding.status` degradation only when it affects confidence.
+
+## User-facing boundary
+
+Keep the plan and evidence-gap bookkeeping internal. Do not mention the tier, Planner, Skill, MCP server, tool names, channels, scope, parameters, call count, or round numbers. Do not announce an “internal plan”; begin the lookup directly. Answer only what the user asked, using natural source titles and clearly labelled inference. Technical traces are allowed only when the user explicitly asks to debug retrieval.

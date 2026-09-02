@@ -29,6 +29,14 @@ mobilework
 
 每次 `mobilework` 都新建会话。进入 TUI 后使用 OpenCode 原生 `/sessions` 恢复历史会话。
 
+默认使用 Qwen 3.8 Flash。需要以 Qwen 3.8 Max 启动复杂任务会话时运行：
+
+```powershell
+.\mobilework --model-profile primary
+```
+
+进入界面后也可以使用 OpenCode 原生 `/models` 切换模型；Mobilework 不会因检索等级变化覆盖用户的模型选择。
+
 ## 对话式工作流
 
 - 直接输入问题：使用当前检索等级回答。
@@ -47,9 +55,9 @@ mobilework
 | Naive | 单次纯向量检索 |
 | Low | 单次向量与关键词融合检索（默认） |
 | Medium | 自动加载公共检索规划 Skill，最多两轮补缺检索 |
-| High | 自动加载公共检索规划 Skill，最多五轮在 retrieve、graph_neighbors、knowledge_tree 间自适应切换 |
+| High | 自动加载公共检索规划 Skill，最多五轮自适应查找与补充证据 |
 
-Medium 和 High 会先加载 `wiki-retrieval-planner`，再加载对应分级 Skill。Planner 只负责查询改写、问题拆分、工具/scope/channel 路由以及证据停止条件，不调用工具，也不生成最终答案。任何等级都不会静默升级。
+Medium 和 High 会先加载公共规划规则，再加载对应分级规则。规划只负责查询改写、问题拆分、资料路由以及证据停止条件，不直接查找资料，也不生成最终答案。任何等级都不会静默升级。普通界面只显示“搜索知识库”“核对来源”等自然语言状态；内部 Skill、工具、路由参数和资料 ID 不进入回答正文。
 
 ## Wiki 同步与恢复
 
@@ -66,7 +74,13 @@ Medium 和 High 会先加载 `wiki-retrieval-planner`，再加载对应分级 Sk
 
 ## 配置与安全
 
-对话模型在 `wiki.config.json` 的 `assistant.model` 中配置，格式为 `provider/model`。模型凭据推荐通过 `opencode auth login` 保存。
+模型在 `wiki.config.json` 的 `assistant.models` 中分三档配置，值的格式都是 `provider/model`：
+
+- `default`：默认对话模型，当前为 Qwen 3.8 Flash。
+- `primary`：可选主力模型，当前为 Qwen 3.8 Max。
+- `small`：标题、短摘要等后台任务，当前为成本更低的 Qwen 3.7 Flash，不参与知识库最终事实回答。
+
+模型凭据推荐通过 `opencode auth login` 保存。启动时生成的独立 OpenCode 配置只启用这些模型所属的 Provider，并只注册 Mobilework 的 Wiki MCP；主 Agent 禁止系统级 Skill、外部检索 MCP 和联网搜索介入检索调度。`wiki-builder` 则只允许加载维护 Skill。
 
 向量检索读取 `.env` 中的 `EMBEDDING_API_KEY`。`EMBEDDING_BASE_URL` 和 `EMBEDDING_MODEL` 留空时使用代码默认值；没有 embedding key 时关键词和知识图谱通道仍可工作，向量通道会标记为降级或禁用。
 

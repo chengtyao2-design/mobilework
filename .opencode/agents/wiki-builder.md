@@ -3,7 +3,11 @@ description: 在已确认的 /sync 中维护 Wiki staging、校验并提交 batc
 mode: subagent
 temperature: 0.1
 permission:
+  skill:
+    "*": deny
+    "wiki-maintainer": allow
   webfetch: deny
+  websearch: deny
   task: deny
   read:
     "*": allow

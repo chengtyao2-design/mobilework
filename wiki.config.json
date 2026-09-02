@@ -15,6 +15,10 @@
     "Thumbs.db"
   ],
   "assistant": {
-    "model": "openrouter/qwen/qwen3.8-flash"
+    "models": {
+      "default": "openrouter/qwen/qwen3.8-flash",
+      "primary": "openrouter/qwen/qwen3.8-max",
+      "small": "openrouter/qwen/qwen3.7-flash"
+    }
   }
 }

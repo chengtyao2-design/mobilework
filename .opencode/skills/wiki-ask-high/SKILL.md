@@ -14,7 +14,7 @@ If the message is a greeting, UI/help request, or otherwise does not ask about t
 
 ## Required prerequisite
 
-`wiki-retrieval-planner` must already be loaded before this Skill. If it is absent, load it before any retrieval call. Start from its plan, then adapt the remaining evidence gaps after each result. This Skill, not the planner, owns tool execution and the final answer.
+`wiki-retrieval-planner` is injected immediately before this Skill by the Mobilework plugin. Never call the `skill` tool to load or replace it. Start from its plan, then adapt the remaining evidence gaps after each result. This Skill, not the planner, owns tool execution and the final answer.
 
 ## Available tools
 
@@ -32,7 +32,12 @@ If the message is a greeting, UI/help request, or otherwise does not ask about t
 
 ## Answer from evidence
 
-- Answer the original question, synthesizing across the tools used and citing each supporting `path` with `page_id`/`source_id`/`chunk_id` when present.
+- Answer the original question, synthesizing the evidence and citing sources with their human-readable document titles. Never expose a path or internal page/source/chunk/claim ID in ordinary user-facing prose.
 - Treat every returned `path` as a citation identifier, never a workspace file — no `read`, grep, or shell on returned paths. Obtain prose through `include_content=true`.
 - Separate retrieved facts from inference and label inference explicitly. Never invent pages, IDs, relationships, or sources.
+- Pages derived from the same original document are one source, not independent corroboration. Describe them as multiple passages from the same source.
 - If five rounds do not fully answer, present what is supported, name the exact evidence gap, and note whether it is a corpus gap or a retrieval limit. Mention `embedding.status` degradation only when it affects confidence.
+
+## User-facing boundary
+
+Keep planning, route selection, evidence-gap updates, and duplicate detection internal. Do not mention the tier, Planner, Skill, MCP server, tool names, channels, scope, parameters, call count, or round numbers. Do not announce an “internal plan”; begin retrieval directly. Answer only what the user asked in natural language. Technical traces are allowed only when the user explicitly asks to debug retrieval.

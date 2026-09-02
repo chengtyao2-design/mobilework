@@ -15,6 +15,11 @@ from .core import atomic_json, load_config
 
 MIN_OPENCODE_VERSION = (1, 18, 25)
 PROJECT_MARKERS = ("pyproject.toml", "wiki.config.json", ".opencode")
+DEFAULT_MODELS = {
+    "default": "openrouter/qwen/qwen3.8-flash",
+    "primary": "openrouter/qwen/qwen3.8-max",
+    "small": "openrouter/qwen/qwen3.7-flash",
+}
 
 
 class LaunchError(RuntimeError):
@@ -150,19 +155,37 @@ def validate_layout(root: Path) -> None:
         raise LaunchError("项目布局不完整，缺少：" + "、".join(missing))
 
 
-def validate_model_auth(root: Path) -> str:
+def model_profiles(root: Path) -> dict[str, str]:
     config = load_config(root)
-    model = str(config.get("assistant", {}).get("model", "")).strip()
-    if "/" not in model:
-        raise LaunchError("wiki.config.json 缺少有效的 assistant.model（格式应为 provider/model）")
+    assistant = config.get("assistant", {})
+    configured = assistant.get("models", {}) if isinstance(assistant, dict) else {}
+    legacy = str(assistant.get("model", "")).strip() if isinstance(assistant, dict) else ""
+    profiles = {
+        name: str(configured.get(name, legacy if name == "default" and legacy else fallback)).strip()
+        for name, fallback in DEFAULT_MODELS.items()
+    }
+    invalid = [name for name, model in profiles.items() if "/" not in model]
+    if invalid:
+        raise LaunchError(
+            "wiki.config.json 模型配置无效："
+            + "、".join(f"assistant.models.{name}" for name in invalid)
+            + "（格式应为 provider/model）"
+        )
+    return profiles
 
+
+def validate_model_auth(root: Path) -> str:
+    profiles = model_profiles(root)
+    model = profiles["default"]
+
+    providers = {value.split("/", 1)[0].lower() for value in profiles.values()}
     provider = model.split("/", 1)[0].lower()
     env_keys = {
         "openrouter": ("OPENROUTER_API_KEY", "OPENROUTER_KEY"),
         "openai": ("OPENAI_API_KEY",),
         "anthropic": ("ANTHROPIC_API_KEY",),
     }.get(provider, (f"{provider.upper().replace('-', '_')}_API_KEY",))
-    if any(os.environ.get(name, "").strip() for name in env_keys):
+    if any(os.environ.get(name, "").strip() for name in env_keys) and providers == {provider}:
         return model
 
     data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
@@ -171,10 +194,18 @@ def validate_model_auth(root: Path) -> str:
         auth = json.loads(auth_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         auth = {}
-    if provider not in auth:
+    missing_providers = sorted(name for name in providers if name not in auth and not any(
+        os.environ.get(key, "").strip()
+        for key in ({
+            "openrouter": ("OPENROUTER_API_KEY", "OPENROUTER_KEY"),
+            "openai": ("OPENAI_API_KEY",),
+            "anthropic": ("ANTHROPIC_API_KEY",),
+        }.get(name, (f"{name.upper().replace('-', '_')}_API_KEY",)))
+    ))
+    if missing_providers:
         names = " / ".join(env_keys)
         raise LaunchError(
-            f"模型 {model} 缺少 {provider} 凭据；请运行 opencode auth login，"
+            f"模型配置缺少 {', '.join(missing_providers)} 凭据；请运行 opencode auth login，"
             f"或设置 {names}"
         )
     return model
@@ -183,8 +214,12 @@ def validate_model_auth(root: Path) -> str:
 def write_runtime_config(root: Path, python: Path) -> Path:
     path = root / ".wiki-state" / "opencode.runtime.json"
     plugin_uri = (root / ".opencode" / "plugins" / "mobilework").resolve().as_uri()
+    models = model_profiles(root)
     payload = {
         "$schema": "https://opencode.ai/config.json",
+        "model": models["default"],
+        "small_model": models["small"],
+        "enabled_providers": sorted({value.split("/", 1)[0] for value in models.values()}),
         "plugin": [plugin_uri],
         "mcp": {
             "wiki-retrieval": {
@@ -240,9 +275,11 @@ def write_runtime_config(root: Path, python: Path) -> Path:
     return path
 
 
-def build_command(executable: str, root: Path) -> list[str]:
-    config = load_config(root)
-    model = str(config.get("assistant", {}).get("model", "")).strip()
+def build_command(executable: str, root: Path, profile: str = "default") -> list[str]:
+    models = model_profiles(root)
+    if profile not in ("default", "primary"):
+        raise LaunchError("启动模型档位只能是 default 或 primary")
+    model = models[profile]
     command = [executable, str(root), "--agent", "mobilework"]
     if model:
         command.extend(("--model", model))
@@ -253,6 +290,12 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="mobilework", description="启动 Mobilework 对话式知识库")
     result.add_argument("--root", default=".", help="Mobilework 项目目录")
     result.add_argument("--check", action="store_true", help="只执行启动检查，不进入 TUI")
+    result.add_argument(
+        "--model-profile",
+        choices=("default", "primary"),
+        default="default",
+        help="启动模型档位：default=Qwen Flash，primary=Qwen Max",
+    )
     return result
 
 
@@ -263,7 +306,9 @@ def main(argv: list[str] | None = None) -> int:
         python = project_python(root)
         python_version = check_python_environment(python, root)
         validate_layout(root)
-        model = validate_model_auth(root)
+        validate_model_auth(root)
+        models = model_profiles(root)
+        model = models[args.model_profile]
         executable = find_opencode()
         environment = child_environment(root, python)
         write_runtime_config(root, python)
@@ -279,13 +324,14 @@ def main(argv: list[str] | None = None) -> int:
                         "opencode": executable,
                         "opencode_version": ".".join(str(value) for value in version),
                         "model": model,
+                        "models": models,
                     },
                     ensure_ascii=False,
                     indent=2,
                 )
             )
             return 0
-        return subprocess.call(build_command(executable, root), cwd=root, env=environment)
+        return subprocess.call(build_command(executable, root, args.model_profile), cwd=root, env=environment)
     except LaunchError as error:
         print(f"mobilework: {error}", file=sys.stderr)
         return 2

@@ -10,6 +10,8 @@ metadata:
 
 Create an internal retrieval plan for the user's original question. Do not call tools and do not answer the question.
 
+The plan is private execution state. Never print, summarize, announce, or otherwise expose it to the user. Never call the `skill` tool; Mobilework has already injected the correct ordered Skill set for this turn.
+
 ## Preserve the request
 
 Keep exact entities, acronyms, numbers, dates, quoted phrases, negations, comparison axes, and requested output constraints. A rewritten query may remove conversational filler but must not broaden or change the claim being investigated.

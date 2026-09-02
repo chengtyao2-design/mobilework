@@ -39,7 +39,11 @@ async function writeTier(root: string, tier: Tier): Promise<void> {
   const target = preferencePath(root)
   const temporary = `${target}.tmp`
   await mkdir(dirname(target), { recursive: true })
-  await writeFile(temporary, `${JSON.stringify({ version: 1, retrieval_tier: tier }, null, 2)}\n`, "utf8")
+  await writeFile(temporary, `${JSON.stringify({
+    version: 2,
+    retrieval_tier: tier,
+    revision: Date.now(),
+  }, null, 2)}\n`, "utf8")
   await rename(temporary, target)
 }
 
@@ -88,6 +92,37 @@ function dialogFor(api: Parameters<TuiPlugin>[0], provided?: TuiDialogStack): Tu
 const mobileworkTui: TuiPlugin = async (api) => {
   const root = rootOf()
   let currentTier = readTier(root)
+  const waitTimers = new Map<string, Array<ReturnType<typeof setTimeout>>>()
+
+  const clearWaitTimers = (sessionID: string) => {
+    for (const timer of waitTimers.get(sessionID) ?? []) clearTimeout(timer)
+    waitTimers.delete(sessionID)
+  }
+
+  const watchLongResponse = (sessionID: string) => {
+    clearWaitTimers(sessionID)
+    waitTimers.set(sessionID, [
+      setTimeout(() => api.ui.toast({
+        title: "Mobilework",
+        message: "仍在整理答案；可以继续等待，或按 Esc 安全中止",
+        variant: "info",
+      }), 45_000),
+      setTimeout(() => api.ui.toast({
+        title: "响应时间较长",
+        message: "可以按 Esc 中止后重试；检索等级不会自动改变",
+        variant: "warning",
+      }), 90_000),
+    ])
+  }
+
+  const stopStatusWatch = api.event.on("session.status", (event) => {
+    if (event.properties.status.type === "busy") watchLongResponse(event.properties.sessionID)
+    else clearWaitTimers(event.properties.sessionID)
+  })
+  const stopIdleWatch = api.event.on("session.idle", (event) => clearWaitTimers(event.properties.sessionID))
+  const stopErrorWatch = api.event.on("session.error", (event) => {
+    if (event.properties.sessionID) clearWaitTimers(event.properties.sessionID)
+  })
 
   if (!api.command) {
     api.ui.toast({
@@ -196,7 +231,13 @@ const mobileworkTui: TuiPlugin = async (api) => {
     },
   ])
 
-  api.lifecycle.onDispose(unregister)
+  api.lifecycle.onDispose(() => {
+    unregister()
+    stopStatusWatch()
+    stopIdleWatch()
+    stopErrorWatch()
+    for (const sessionID of waitTimers.keys()) clearWaitTimers(sessionID)
+  })
   api.ui.toast({
     title: "Mobilework 已就绪",
     message: `Retrieve: ${currentTier[0].toUpperCase()}${currentTier.slice(1)} · /retrieve · /sync`,
