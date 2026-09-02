@@ -220,6 +220,10 @@ def write_runtime_config(root: Path, python: Path) -> Path:
         "model": models["default"],
         "small_model": models["small"],
         "enabled_providers": sorted({value.split("/", 1)[0] for value in models.values()}),
+        "tool_output": {
+            "max_lines": 400,
+            "max_bytes": 16000,
+        },
         "plugin": [plugin_uri],
         "mcp": {
             "wiki-retrieval": {

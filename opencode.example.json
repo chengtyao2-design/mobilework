@@ -3,6 +3,10 @@
   "model": "openrouter/qwen/qwen3.8-flash",
   "small_model": "openrouter/qwen/qwen3.7-flash",
   "enabled_providers": ["openrouter"],
+  "tool_output": {
+    "max_lines": 400,
+    "max_bytes": 16000
+  },
   "mcp": {
     "wiki-retrieval": {
       "type": "local",

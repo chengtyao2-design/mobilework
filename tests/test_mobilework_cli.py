@@ -125,6 +125,7 @@ def test_runtime_config_registers_references_and_tui_compatibility(tmp_path: Pat
     assert runtime["model"] == "openrouter/qwen/qwen3.8-flash"
     assert runtime["small_model"] == "openrouter/qwen/qwen3.7-flash"
     assert runtime["enabled_providers"] == ["openrouter"]
+    assert runtime["tool_output"] == {"max_lines": 400, "max_bytes": 16000}
     assert cli["plugins"] == runtime["plugin"]
     assert tui["plugin"] == runtime["plugin"]
 
@@ -156,7 +157,7 @@ def test_plugin_autoload_order_and_tier_boundaries(repo_root: Path) -> None:
     assert 'input.tool !== "skill"' in server
     assert "MANAGED_RETRIEVAL_SKILLS" in server
     assert 'output.title = FRIENDLY_TOOL_TITLES[kind]' in server
-    assert "MAX_TOOL_OUTPUT_CHARS" in server
+    assert "compactToolOutput" not in server
     assert 'slash: { name: "retrieve"' in tui
     assert "DialogSelect<Tier>" in tui
     assert 'slash: { name: "sync"' in tui

@@ -18,8 +18,6 @@ const FRIENDLY_TOOL_TITLES: Record<string, string> = {
   graph_neighbors: "查找相关资料",
   knowledge_tree: "浏览知识库目录",
 }
-const MAX_CONTENT_CHARS = 2400
-const MAX_TOOL_OUTPUT_CHARS = 16000
 
 function retrievalTier(root: string): Tier {
   try {
@@ -40,40 +38,6 @@ function promptText(parts: any[]): string {
 
 function retrievalToolKind(tool: string): string | undefined {
   return Object.keys(FRIENDLY_TOOL_TITLES).find((name) => tool === name || tool.endsWith(`_${name}`))
-}
-
-function compactValue(value: any, key = ""): any {
-  if (key === "runs" || key === "timings" || key === "raw_scores" || key === "matched_chunks") {
-    return undefined
-  }
-  if (typeof value === "string" && key === "content" && value.length > MAX_CONTENT_CHARS) {
-    return `${value.slice(0, MAX_CONTENT_CHARS)}\n…（内容已截断）`
-  }
-  if (Array.isArray(value)) return value.map((item) => compactValue(item)).filter((item) => item !== undefined)
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .map(([childKey, child]) => [childKey, compactValue(child, childKey)])
-        .filter(([, child]) => child !== undefined),
-    )
-  }
-  return value
-}
-
-function compactToolOutput(raw: string): string {
-  try {
-    const compacted = JSON.stringify(compactValue(JSON.parse(raw)), null, 2)
-    if (compacted.length <= MAX_TOOL_OUTPUT_CHARS) return compacted
-    return JSON.stringify({
-      truncated: true,
-      notice: "检索结果已按上下文上限截断；只能依据 partial_output 中的完整可见证据作答",
-      partial_output: compacted.slice(0, MAX_TOOL_OUTPUT_CHARS - 500),
-    }, null, 2)
-  } catch {
-    return raw.length <= MAX_TOOL_OUTPUT_CHARS
-      ? raw
-      : `${raw.slice(0, MAX_TOOL_OUTPUT_CHARS)}\n…（检索结果已按上下文上限截断）`
-  }
 }
 
 const MobileworkPlugin: Plugin = async ({ directory }) => {
@@ -126,7 +90,6 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
       const kind = retrievalToolKind(input.tool)
       if (!kind) return
       output.title = FRIENDLY_TOOL_TITLES[kind]
-      output.output = compactToolOutput(output.output)
     },
   }
 }
