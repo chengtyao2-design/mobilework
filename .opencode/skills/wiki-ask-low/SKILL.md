@@ -27,7 +27,7 @@ If the message is a greeting, UI/help request, or otherwise does not ask about t
 ## Answer from evidence
 
 - Answer the original question, not the rewritten query.
-- Treat every returned `path` as a citation identifier, never a workspace file — no `read`, grep, or shell on returned paths. Get prose from the `include_content=true` payload.
+- Treat every returned `path` as a citation identifier, never a workspace file — no `read`, grep, or shell on returned paths. Get prose only from `matched_chunks[].text` in the `include_content=true` payload. These are bounded evidence chunks, not full pages.
 - Cite sources with their human-readable document titles, never with a path or internal ID. The fused ranking already blends semantic and exact-term evidence; prefer top-ranked results but read their snippets before asserting.
 - Separate retrieved facts from inference and label inference. Never invent pages, IDs, or relationships.
 - If results are empty or off-target after inspecting all of them, say so and recommend the Medium tier (which decomposes the question and adds the graph channel). Do not open a retrieval loop here.

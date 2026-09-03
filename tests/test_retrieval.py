@@ -8,13 +8,14 @@ with constructed hits.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from unittest import mock
 
 import pytest
 
-from wiki_retrieval import dedup, index, loader, server, store
+from wiki_retrieval import chunking, dedup, index, loader, server, store
 from wiki_retrieval import embedding as embedding_module
 from wiki_retrieval.channels import graph, keyword
 from wiki_retrieval.fusion import Run, rrf
@@ -73,6 +74,7 @@ def hit(page_id: str, score: float) -> dict:
         "page_id": page_id,
         "chunk_index": 0,
         "heading_path": f"# {page_id}",
+        "chunk_text": f"vector evidence for {page_id}",
         "score": score,
     }
 
@@ -139,6 +141,43 @@ class TestTextUtil:
         assert len(text) <= 80 + 160
 
 
+class TestChunking:
+    def test_heading_aware_chunks_are_bounded_and_drop_frontmatter(self):
+        content = "---\ntitle: Example\nsecret: metadata\n---\n# Example\n\n"
+        content += "## First\n\n" + ("甲。" * 650)
+        content += "\n\n## Second\n\n" + ("乙。" * 650)
+        chunks = chunking.chunk_document(
+            page_id="example", title="Example", content=content, scope="wiki"
+        )
+
+        assert len(chunks) >= 2
+        assert all(len(item["text"]) <= chunking.WIKI_MAX_CHARS for item in chunks)
+        assert all("secret: metadata" not in item["text"] for item in chunks)
+        assert any("Second" in item["heading_path"] for item in chunks)
+        assert all(item["embedding_text"].startswith("Example") for item in chunks)
+
+    def test_claim_markers_are_not_indexed_or_returned(self):
+        chunks = chunking.chunk_document(
+            page_id="claims",
+            title="Claims",
+            content='# Claims\n\nEvidence.\n<!-- wiki-claim: {"id":"internal"} -->',
+            scope="wiki",
+        )
+        assert "wiki-claim" not in chunks[0]["text"]
+        assert "internal" not in chunks[0]["embedding_text"]
+
+    def test_chunk_ids_are_stable(self):
+        arguments = {
+            "page_id": "stable",
+            "title": "Stable",
+            "content": "# Stable\n\n## A\n\n" + ("内容。" * 600),
+            "scope": "wiki",
+        }
+        first = chunking.chunk_document(**arguments)
+        second = chunking.chunk_document(**arguments)
+        assert [item["chunk_id"] for item in first] == [item["chunk_id"] for item in second]
+
+
 class TestLoader:
     def test_scopes_and_totals(self, corpus):
         assert corpus.totals() == {"wiki": 4, "source": 1}
@@ -195,8 +234,35 @@ class TestKeywordChannel:
 
     def test_include_content(self, corpus_root: Path):
         payload = retrieve("alpha", top_k=2, include_content=True, root=corpus_root)
-        assert "content" in payload["results"][0]
-        assert "content" not in retrieve("alpha", top_k=2, root=corpus_root)["results"][0]
+        result = payload["results"][0]
+        assert "content" not in result
+        assert result["matched_chunks"][0]["text"]
+        without_content = retrieve("alpha", top_k=2, root=corpus_root)["results"][0]
+        assert "text" not in without_content["matched_chunks"][0]
+
+    def test_evidence_is_limited_per_page_and_globally(self, corpus_root: Path):
+        for number in range(6):
+            (corpus_root / "wiki" / "concepts" / f"budget-{number}.md").write_text(
+                f"# Budget {number}\n\n## Evidence\n\n" + ("budgetneedle。" * 260),
+                encoding="utf-8",
+            )
+        loader.reset_cache()
+        payload = retrieve(
+            "budgetneedle",
+            channels=["keyword"],
+            top_k=6,
+            include_content=True,
+            root=corpus_root,
+        )
+        assert all(len(result["matched_chunks"]) <= 2 for result in payload["results"])
+        texts = [
+            chunk["text"]
+            for result in payload["results"]
+            for chunk in result["matched_chunks"]
+            if "text" in chunk
+        ]
+        assert texts
+        assert sum(map(len, texts)) <= 8000
 
 
 class TestFusion:
@@ -256,6 +322,7 @@ class TestGraphChannel:
                 "qqabsentqq",
                 channels=["vector", "graph"],
                 top_k=5,
+                include_content=True,
                 root=corpus_root,
             )
         assert payload["graph_expansion"]["slots"] == 2
@@ -266,6 +333,8 @@ class TestGraphChannel:
         assert supplements[0]["snippet"].startswith("Graph neighbor of ")
         assert supplements[0]["graph_related_to"] == ["伽玛实体"]
         assert supplements[0]["fused_score"] == pytest.approx(1.0 / 61.0, abs=1e-12)
+        assert "content" not in supplements[0]
+        assert supplements[0]["matched_chunks"] == []
 
     def test_neighbors_walks_by_distance(self, corpus_root: Path):
         payload = server.neighbors(corpus_root, "alpha", depth=1, top_k=10)
@@ -382,6 +451,45 @@ class TestIndexFreshness:
         }
         assert state["corpus_max_mtime"] > 0
 
+    def test_old_chunking_strategy_is_stale(self, corpus_root: Path):
+        meta = index.write_meta(corpus_root, dim=4, rows=4)
+        meta["chunking_strategy"] = "whole_page_v1"
+        index.meta_path(corpus_root).write_text(json.dumps(meta), encoding="utf-8")
+        state = index.freshness(corpus_root)
+        assert state["stale_index"] is True
+        assert "chunking strategy changed" in state["reason"]
+
+    def test_index_rows_cover_content_after_eight_thousand_chars(self, corpus_root: Path):
+        target = corpus_root / "wiki" / "concepts" / "long.md"
+        target.write_text("# Long\n\n## Start\n\n" + ("前。" * 4200) + "\n\n## Tail\n\nTAIL_SENTINEL", encoding="utf-8")
+        rows = index._rows(corpus_root, None)
+        assert any("TAIL_SENTINEL" in row["chunk_text"] for row in rows)
+        assert len([row for row in rows if row["page_id"] == "long"]) > 1
+
+    def test_build_embeds_every_chunk_and_records_page_count(self, corpus_root: Path):
+        target = corpus_root / "wiki" / "concepts" / "long.md"
+        target.write_text("# Long\n\n## A\n\n" + ("内容。" * 1800), encoding="utf-8")
+        captured = {}
+
+        def fake_fetch_batch(texts):
+            captured.setdefault("batches", []).append(list(texts))
+            return [[0.1, 0.2] for _ in texts], 1.0
+
+        def fake_replace(root, rows, dim):
+            captured["rows"] = list(rows)
+            captured["dim"] = dim
+
+        with mock.patch.object(embedding_module, "has_api_key", return_value=True), mock.patch.object(
+            embedding_module, "fetch_batch", side_effect=fake_fetch_batch
+        ), mock.patch.object(store, "replace_all", side_effect=fake_replace):
+            meta = index.build(corpus_root, progress=lambda _: None)
+
+        embedded = [text for batch in captured["batches"] for text in batch]
+        assert len(captured["rows"]) == len(embedded) == meta["rows"]
+        assert meta["rows"] > meta["wiki_pages"]
+        assert meta["chunking_strategy"] == "markdown_chunk_v2"
+        assert captured["dim"] == 2
+
     def test_meta_then_edit_flips_stale_index(self, corpus_root: Path):
         meta = index.write_meta(corpus_root, dim=4, rows=4)
         fresh = index.freshness(corpus_root)
@@ -408,7 +516,7 @@ class TestKnowledgeTree:
         first = server.catalog(corpus_root)
         loader.reset_cache()
         assert server.catalog(corpus_root) == first
-        assert first["chunking_strategy"] == "whole_page_v1"
+        assert first["chunking_strategy"] == "markdown_chunk_v2"
         assert first["totals"]["wiki_pages"] == 4
         assert first["totals"]["source_files"] == 1
         assert [group["category"] for group in first["wiki"]] == ["concepts", "entities"]
@@ -463,3 +571,16 @@ class TestRealCorpus:
         assert payload["corpus"]["source"] > 0
         assert payload["results"]
         assert all(r["scope"] == "source" for r in payload["results"])
+
+    def test_source_content_is_returned_only_as_bounded_chunks(self, project_root: Path):
+        payload = retrieve("离职", scope="source", top_k=5, include_content=True, root=project_root)
+        assert payload["results"]
+        assert all("content" not in result for result in payload["results"])
+        evidence = [
+            chunk["text"]
+            for result in payload["results"]
+            for chunk in result["matched_chunks"]
+            if "text" in chunk
+        ]
+        assert evidence
+        assert sum(map(len, evidence)) <= 8000

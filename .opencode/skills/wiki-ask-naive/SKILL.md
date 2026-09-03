@@ -27,7 +27,7 @@ If the message is a greeting, UI/help request, or otherwise does not ask about t
 ## Answer from evidence
 
 - Answer the original question, not the rewritten query.
-- Treat every returned `path` as a knowledge-base citation identifier, never a file in the current workspace. Do not `read`, grep, or shell out to a returned path; get prose from the `include_content=true` payload.
+- Treat every returned `path` as a knowledge-base citation identifier, never a file in the current workspace. Do not `read`, grep, or shell out to a returned path; get prose only from `matched_chunks[].text` in the `include_content=true` payload. The tool returns bounded evidence chunks, not full pages.
 - Cite sources with their human-readable document titles. Never expose a path or `page_id` in ordinary user-facing prose. Separate retrieved facts from inference and label inference explicitly. Never invent pages, IDs, or relationships the tool did not return.
 - If the single result is empty or off-target, say so plainly and suggest a narrower question or a higher retrieval tier — do not silently make another call.
 - If `embedding.status` is `degraded` or `disabled`, the vector channel returned nothing useful; state that the Naive tier cannot answer without embeddings and recommend the Low tier (which adds the keyword channel).

@@ -27,13 +27,13 @@ If the message is a greeting, UI/help request, or otherwise does not ask about t
    - Structure/inventory or an unknown graph seed: call `mobile-retrieval_knowledge_tree()` once.
 
    Do not replace a planned graph/tree route with a generic retrieve call merely for convenience.
-3. **Judge sufficiency.** Inspect every returned snippet, content block, ID, and relationship. Mark each information point as supported or unsupported.
+3. **Judge sufficiency.** Inspect every returned snippet, `matched_chunks[].text` evidence block, ID, and relationship. Mark each information point as supported or unsupported.
 4. **Round 2 — targeted supplement (optional).** For still-unsupported points only, make one more focused round with a sharper query or a complementary channel/scope. Do not exceed two rounds total, and do not re-issue a query that only cosmetically differs from one already run.
 
 ## Answer from evidence
 
 - Answer the original question, weaving the per-point evidence into one coherent response.
-- Treat every returned `path` as a citation identifier, never a workspace file — no `read`, grep, or shell on returned paths. Get prose from `include_content=true` payloads.
+- Treat every returned `path` as a citation identifier, never a workspace file — no `read`, grep, or shell on returned paths. Get prose only from `matched_chunks[].text` in `include_content=true` payloads; full page bodies are intentionally unavailable.
 - Cite sources with human-readable document titles. Never expose paths or page/source/chunk/claim IDs in ordinary user-facing prose. Separate retrieved facts from inference and label inference explicitly. Never invent pages, IDs, relationships, or sources.
 - Pages derived from the same original document are one source, not independent corroboration. Describe them as multiple passages from the same source.
 - If after two rounds some information points remain unsupported, answer what the evidence supports, state the specific gap, and recommend the High tier for open-ended follow-up. Do not keep looping.
