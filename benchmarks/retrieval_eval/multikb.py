@@ -33,6 +33,7 @@ SCORE_WEIGHTS = {
     "conflict_handling": 0.10,
     "abstention_score": 0.10,
 }
+THRESHOLD_EPSILON = 1e-12
 
 
 @dataclass(frozen=True)
@@ -241,7 +242,11 @@ def feature_promotion_decision(
     quality_gain = float(candidate["quality_score"]) - float(baseline["quality_score"])
     hit_gain = float(candidate["hit_at_5"]) - float(baseline["hit_at_5"])
     return {
-        "promote": (quality_gain >= 0.03 or hit_gain >= 0.05) and latency_ratio <= 1.25,
+        "promote": (
+            quality_gain + THRESHOLD_EPSILON >= 0.03
+            or hit_gain + THRESHOLD_EPSILON >= 0.05
+        )
+        and latency_ratio <= 1.25 + THRESHOLD_EPSILON,
         "quality_gain": quality_gain,
         "hit_at_5_gain": hit_gain,
         "latency_ratio": latency_ratio,
@@ -271,9 +276,9 @@ def freshness_promotion_decision(
     ordinary_quality_drop = ordinary_quality_baseline - ordinary_quality_candidate
     return {
         "promote": (
-            stale_error_reduction >= 0.25
-            and ordinary_quality_drop <= 0.02
-            and latency_ratio <= 1.15
+            stale_error_reduction + THRESHOLD_EPSILON >= 0.25
+            and ordinary_quality_drop <= 0.02 + THRESHOLD_EPSILON
+            and latency_ratio <= 1.15 + THRESHOLD_EPSILON
         ),
         "stale_error_reduction": stale_error_reduction,
         "ordinary_quality_drop": ordinary_quality_drop,
