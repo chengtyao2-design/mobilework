@@ -250,12 +250,12 @@ def test_plugin_autoload_order_and_tier_boundaries(repo_root: Path) -> None:
     server = (repo_root / ".opencode/plugins/mobilework/index.ts").read_text(encoding="utf-8")
     tui = (repo_root / ".opencode/plugins/mobilework/tui.ts").read_text(encoding="utf-8")
 
-    assert '["wiki-retrieval-planner", `wiki-ask-${tier}`]' in server
-    assert server.index("wiki-retrieval-planner") < server.index("`wiki-ask-${tier}`")
-    assert "tier === \"medium\" || tier === \"high\"" in server
+    assert '["wiki-retrieval-planner", "wiki-ask-federated"]' in server
     assert "Never change or silently escalate it" in server
     assert "sessionTier" not in server
-    assert "const tier = retrievalTier(root)" in server
+    assert "resolveConfig(readPreferences(root)" in server
+    assert "RetrievalGuard" in server
+    assert "output.args.overrides" in server
     assert 'input.tool !== "skill"' in server
     assert "MANAGED_RETRIEVAL_SKILLS" in server
     assert 'output.title = FRIENDLY_TOOL_TITLES[kind]' in server
@@ -263,6 +263,7 @@ def test_plugin_autoload_order_and_tier_boundaries(repo_root: Path) -> None:
     assert 'slash: { name: "retrieve"' in tui
     assert "DialogSelect<Tier>" in tui
     assert 'slash: { name: "sync"' in tui
+    assert '"--root", root, "--kb-root", kbRoot' in tui
     assert "promptAsync" in tui
     assert "opencode run" not in tui
     assert 'api.event.on("session.status"' in tui
@@ -274,6 +275,8 @@ def test_plugin_autoload_order_and_tier_boundaries(repo_root: Path) -> None:
     assert "不要再次检索" in tui
     assert "MOBILEWORK_RETRY_ANSWER_ONLY" in server
     assert "Timeout recovery must reuse" in server
+    builder = (repo_root / ".opencode/agents/wiki-builder.md").read_text(encoding="utf-8")
+    assert "--root <应用根> --kb-root <MOBILEWORK_KB_ROOT>" in builder
 
 
 def test_skill_tier_limits_and_planner_contract(repo_root: Path) -> None:
@@ -283,10 +286,11 @@ def test_skill_tier_limits_and_planner_contract(repo_root: Path) -> None:
 
     assert "Do not call tools and do not answer the question" in planner
     assert "Never change it or silently escalate" in planner
-    assert "at most two rounds" in medium
-    assert "after five rounds" in high
-    assert "duplicate:true" in high
-    for content in (medium, high):
+    unified = (repo_root / ".opencode/skills/wiki-ask-federated/SKILL.md").read_text(encoding="utf-8")
+    assert "route_knowledge_bases" in unified
+    assert "max_tool_calls" in unified
+    assert "duplicate:true" in unified
+    for content in (unified,):
         assert "human-readable document titles" in content
         assert "Do not mention the tier" in content
         assert "independent corroboration" in content

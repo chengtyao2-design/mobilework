@@ -1,9 +1,9 @@
-import { readFileSync } from "node:fs"
 import { mkdir, rename, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import type { TuiDialogStack, TuiPlugin } from "@opencode-ai/plugin/tui"
+import { readPreferences, resolveConfig, SWITCHES } from "./retrieval-config.mjs"
 
-type Tier = "naive" | "low" | "medium" | "high"
+type Tier = "fast" | "balanced" | "reasoning" | "research"
 type Preview = {
   pending_batch?: string | null
   pending_count?: number
@@ -12,10 +12,10 @@ type Preview = {
 }
 
 const TIERS: Array<{ title: string; value: Tier; description: string }> = [
-  { title: "Naive", value: "naive", description: "一次纯向量检索，速度最快" },
-  { title: "Low", value: "low", description: "一次向量 + 关键词融合（默认）" },
-  { title: "Medium", value: "medium", description: "先规划，再执行最多两轮检索" },
-  { title: "High", value: "high", description: "先规划，再执行最多五轮自适应检索" },
+  { title: "Fast", value: "fast", description: "5 秒 / 一次单通道召回" },
+  { title: "Balanced", value: "balanced", description: "12 秒 / 一次混合召回（默认）" },
+  { title: "Reasoning", value: "reasoning", description: "30 秒 / 最多四次检索" },
+  { title: "Research", value: "research", description: "90 秒 / 最多八次检索" },
 ]
 
 function rootOf(): string {
@@ -23,16 +23,11 @@ function rootOf(): string {
 }
 
 function preferencePath(root: string): string {
-  return join(root, ".wiki-state", "preferences.json")
+  return join(root, ".mobilework-state", "preferences.json")
 }
 
 function readTier(root: string): Tier {
-  try {
-    const parsed = JSON.parse(readFileSync(preferencePath(root), "utf8"))
-    return TIERS.some((item) => item.value === parsed?.retrieval_tier) ? parsed.retrieval_tier : "low"
-  } catch {
-    return "low"
-  }
+  return resolveConfig(readPreferences(root)).retrieval_profile as Tier
 }
 
 async function writeTier(root: string, tier: Tier): Promise<void> {
@@ -40,8 +35,11 @@ async function writeTier(root: string, tier: Tier): Promise<void> {
   const temporary = `${target}.tmp`
   await mkdir(dirname(target), { recursive: true })
   await writeFile(temporary, `${JSON.stringify({
-    version: 2,
-    retrieval_tier: tier,
+    ...readPreferences(root),
+    version: 3,
+    retrieval_profile: tier,
+    retrieval: {},
+    budget: {},
     revision: Date.now(),
   }, null, 2)}\n`, "utf8")
   await rename(temporary, target)
@@ -55,9 +53,10 @@ async function runWiki(root: string, args: string[]): Promise<any> {
   )
   const bun = (globalThis as any).Bun
   if (!bun?.spawn) throw new Error("当前 OpenCode 运行时不支持本地进程调用")
-  const child = bun.spawn([python, "-m", "wiki_maintainer", "--root", root, ...args], {
+  const kbRoot = process.env.MOBILEWORK_KB_ROOT || root
+  const child = bun.spawn([python, "-m", "wiki_maintainer", "--root", root, "--kb-root", kbRoot, ...args], {
     cwd: root,
-    env: process.env,
+    env: { ...process.env, MOBILEWORK_KB_ROOT: kbRoot },
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -168,7 +167,7 @@ const mobileworkTui: TuiPlugin = async (api) => {
     {
       title: `检索等级 · ${currentTier.toUpperCase()}`,
       value: "mobilework.retrieve",
-      description: "选择 Naive / Low / Medium / High",
+      description: "选择 Fast / Balanced / Reasoning / Research（重置高级覆盖）",
       category: "Mobilework",
       suggested: true,
       slash: { name: "retrieve", aliases: [] },
@@ -193,6 +192,35 @@ const mobileworkTui: TuiPlugin = async (api) => {
               dialog.clear()
               api.ui.toast({ title: "保存检索等级失败", message: String(error), variant: "error" })
             }
+          },
+        }))
+      },
+    },
+    {
+      title: "检索高级开关",
+      value: "mobilework.retrieve.options",
+      description: "独立设置检索能力和 Claim 新鲜度；预算可在应用 preferences.json 中覆盖",
+      category: "Mobilework",
+      slash: { name: "retrieve-options", aliases: [] },
+      onSelect: (provided) => {
+        const dialog = dialogFor(api, provided)
+        const saved = readPreferences(root)
+        const config = resolveConfig(saved)
+        const options = [...SWITCHES.map(key => ({ title: `${key}: ${config.retrieval[key] ? "开" : "关"}`, value: key })), { title: `claim_freshness_mode: ${config.retrieval.claim_freshness_mode}`, value: "claim_freshness_mode" }]
+        dialog.replace(() => api.ui.DialogSelect<string>({
+          title: "切换独立能力（再次打开可继续设置）", options,
+          onSelect: async (option) => {
+            try {
+              const key = option.value
+              const modes = ["off", "context", "rerank", "both"]
+              const value = key === "claim_freshness_mode" ? modes[(modes.indexOf(config.retrieval[key]) + 1) % modes.length] : !config.retrieval[key]
+              const target = preferencePath(root)
+              await mkdir(dirname(target), { recursive: true })
+              await writeFile(`${target}.tmp`, JSON.stringify({ ...saved, version: 3, retrieval_profile: config.retrieval_profile, retrieval: { ...saved.retrieval, [key]: value } }, null, 2), "utf8")
+              await rename(`${target}.tmp`, target)
+              dialog.clear()
+              api.ui.toast({ title: "已保存", message: `${key}: ${value}`, variant: "success" })
+            } catch (error) { api.ui.toast({ title: "保存失败", message: String(error), variant: "error" }) }
           },
         }))
       },
@@ -249,7 +277,7 @@ const mobileworkTui: TuiPlugin = async (api) => {
                 agent: "mobilework",
                 parts: [{
                   type: "text",
-                  text: `[MOBILEWORK_SYNC_CONFIRMED]\n用户已确认同步。扫描摘要：${summary(preview)}\n请按主 Agent 规则恰好委派一次 wiki-builder，并在当前会话报告结果。`,
+                  text: `[MOBILEWORK_SYNC_CONFIRMED]\nMOBILEWORK_KB_ROOT=${process.env.MOBILEWORK_KB_ROOT || root}\n用户已确认同步。扫描摘要：${summary(preview)}\n请按主 Agent 规则恰好委派一次 wiki-builder，并在当前会话报告结果。`,
                 }],
               })
               api.ui.toast({ title: "Mobilework", message: "Wiki Builder 已开始", variant: "info" })

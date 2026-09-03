@@ -1,6 +1,6 @@
 ---
 name: wiki-retrieval-planner
-description: Plan complex local-Wiki retrieval by preserving the user's constraints, decomposing evidence needs, rewriting queries, and routing each need to retrieve, graph_neighbors, or knowledge_tree. Load before the Medium or High retrieval tier; do not use for Naive or Low.
+description: Plan local multi-knowledge-base retrieval within the injected profile and independent switches before unified execution.
 metadata:
   audience: wiki-users
   role: retrieval-planner
@@ -19,7 +19,7 @@ Keep exact entities, acronyms, numbers, dates, quoted phrases, negations, compar
 ## Plan the evidence
 
 1. Classify the information need as fact, explanation, comparison, relationship, provenance/original wording, knowledge-base structure, or multi-hop synthesis.
-2. Split it into independently verifiable information points only when that improves recall. Avoid several cosmetic variants of the same query.
+2. Split into independently verifiable points only if decompose is enabled, within max_subqueries. Avoid cosmetic variants of one query.
 3. For each point, determine:
    - a concise query with discriminative Chinese or English keywords;
    - `retrieve`, `graph_neighbors`, or `knowledge_tree`;
@@ -29,11 +29,11 @@ Keep exact entities, acronyms, numbers, dates, quoted phrases, negations, compar
    - what evidence would make the point supported.
 4. Define the remaining evidence gaps and a stop condition.
 
-Use `knowledge_tree` for inventory or when a graph seed is unknown, `graph_neighbors` for explicit relationships from a known page, `scope="source"` for provenance or original wording, and `retrieve` for ordinary semantic or exact-term recall. The vector index covers Wiki pages, so source-only searches need specific keyword-bearing queries.
+Use knowledge_tree for inventory, graph_neighbors only when graph is enabled, source scope for provenance, and retrieve for semantic or exact-term recall. Wiki and source chunks can both be indexed. Preserve the user's kb_ids boundary. The execution skill calls route_knowledge_bases first; backend owns parallel KB search and fusion.
 
 ## Hard boundaries
 
 - The selected tier is a fixed execution budget. Never change it or silently escalate it.
-- Medium may execute at most two rounds; High may execute at most five rounds.
+- Use the injected deadline_ms, max_tool_calls, max_subqueries, max_graph_depth and max_evidence_chars; legacy tier rounds do not override these budgets.
 - Do not call a retrieval tool, generate the final answer, or present inference as evidence.
 - If the chosen tier cannot close a gap, leave the gap explicit for the tier Skill to report.

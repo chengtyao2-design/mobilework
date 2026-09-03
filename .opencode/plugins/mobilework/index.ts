@@ -1,10 +1,8 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
+import { readPreferences, resolveConfig, RetrievalGuard } from "./retrieval-config.mjs"
 
-type Tier = "naive" | "low" | "medium" | "high"
-
-const TIERS = new Set<Tier>(["naive", "low", "medium", "high"])
 const SYNC_MARKER = "[MOBILEWORK_SYNC_CONFIRMED]"
 const RETRY_ANSWER_MARKER = "[MOBILEWORK_RETRY_ANSWER_ONLY]"
 const MANAGED_RETRIEVAL_SKILLS = new Set([
@@ -13,20 +11,14 @@ const MANAGED_RETRIEVAL_SKILLS = new Set([
   "wiki-ask-medium",
   "wiki-ask-high",
   "wiki-retrieval-planner",
+  "wiki-ask-federated",
 ])
 const FRIENDLY_TOOL_TITLES: Record<string, string> = {
   retrieve: "搜索知识库",
   graph_neighbors: "查找相关资料",
   knowledge_tree: "浏览知识库目录",
-}
-
-function retrievalTier(root: string): Tier {
-  try {
-    const value = JSON.parse(readFileSync(join(root, ".wiki-state", "preferences.json"), "utf8"))
-    return TIERS.has(value?.retrieval_tier) ? value.retrieval_tier : "low"
-  } catch {
-    return "low"
-  }
+  route_knowledge_bases: "选择相关知识库",
+  list_knowledge_bases: "浏览可用知识库",
 }
 
 function skillBody(root: string, name: string): string {
@@ -47,6 +39,8 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
   const syncSessions = new Set<string>()
   const retryAnswerSessions = new Set<string>()
   const nonMobileworkSessions = new Set<string>()
+  const guards = new Map<string, RetrievalGuard>()
+  const requests = new Map<string, any>()
 
   const load = (name: string): string => {
     const cached = skillCache.get(name)
@@ -59,6 +53,10 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
   return {
     "chat.message": async (input, output) => {
       const text = promptText(output.parts)
+      // Machine-readable per-turn overrides may be supplied by a client text part.
+      const override = text.match(/<mobilework-retrieval>([\s\S]*?)<\/mobilework-retrieval>/)
+      try { requests.set(input.sessionID, override ? JSON.parse(override[1]) : {}) } catch { requests.set(input.sessionID, {}) }
+      guards.delete(input.sessionID)
       if (input.agent && input.agent !== "mobilework") nonMobileworkSessions.add(input.sessionID)
       else if (input.agent === "mobilework") nonMobileworkSessions.delete(input.sessionID)
       if (text.includes(SYNC_MARKER)) syncSessions.add(input.sessionID)
@@ -78,19 +76,25 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
 
       // Read the preference at generation time. chat.message and system.transform
       // are not ordered API guarantees, so a per-session tier cache lags by one turn.
-      const tier = retrievalTier(root)
-
-      // AUTOLOAD_ORDER is intentionally stable and covered by tests:
-      // Medium/High planner instructions precede tier execution instructions.
-      const names = tier === "medium" || tier === "high"
-        ? ["wiki-retrieval-planner", `wiki-ask-${tier}`]
-        : [`wiki-ask-${tier}`]
+      const config = resolveConfig(readPreferences(root), requests.get(input.sessionID ?? "") ?? {})
+      const names = ["wiki-retrieval-planner", "wiki-ask-federated"]
       output.system.push(
-        `Mobilework retrieval mode for THIS TURN is ${tier.toUpperCase()}. This current value overrides every retrieval tier or skill mentioned in conversation history. Never change or silently escalate it. The managed retrieval skills below are already loaded; never call the skill tool to load or replace them. Keep plans, tier names, tool names, routes, parameters, rounds, and internal IDs out of user-facing prose.`,
+        `Mobilework retrieval configuration for THIS TURN is ${JSON.stringify(config)}. Never change or silently escalate it. This value overrides historical settings. Pass retrieval_profile as profile and retrieval/budget as overrides to retrieve. Managed skills are already loaded; never call skill to replace them. Keep plans, tool names, parameters, and internal IDs out of user-facing prose.`,
         ...names.map((name) => `\n<mobilework-skill name="${name}">\n${load(name)}\n</mobilework-skill>`),
       )
     },
     "tool.execute.before": async (input, output) => {
+      const kind = retrievalToolKind(input.tool)
+      if (kind && !nonMobileworkSessions.has(input.sessionID) && !syncSessions.has(input.sessionID)) {
+        if (!["route_knowledge_bases", "list_knowledge_bases"].includes(kind)) {
+          const config = resolveConfig(readPreferences(root), requests.get(input.sessionID) ?? {})
+          let guard = guards.get(input.sessionID)
+          if (!guard) { guard = new RetrievalGuard(config); guards.set(input.sessionID, guard) }
+          const stop = guard.before(`${kind}:${output.args?.query ?? JSON.stringify(output.args)}`)
+          if (stop) throw new Error(`Retrieval stopped: ${stop}; answer using existing evidence and disclose gaps`)
+          if (kind === "retrieve") { output.args.profile = config.retrieval_profile; output.args.overrides = { retrieval: config.retrieval, budget: config.budget } }
+        }
+      }
       if (retryAnswerSessions.has(input.sessionID) && retrievalToolKind(input.tool)) {
         throw new Error("Timeout recovery must reuse the completed retrieval result and cannot retrieve again")
       }
@@ -104,6 +108,13 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
       const kind = retrievalToolKind(input.tool)
       if (!kind) return
       output.title = FRIENDLY_TOOL_TITLES[kind]
+      if (!["route_knowledge_bases", "list_knowledge_bases"].includes(kind)) {
+        try {
+          const data = JSON.parse(output.output)
+          const results = data.results ?? data.hits ?? data.neighbors ?? []
+          guards.get(input.sessionID)?.after(results.map((hit: any) => `${hit.kb_id ?? ""}:${hit.chunk_id ?? hit.page_id ?? hit.id ?? JSON.stringify(hit)}`), data.evidence_sufficient === true, data.duplicate === true)
+        } catch { /* Non-JSON tool results do not prove absence of new evidence. */ }
+      }
     },
   }
 }

@@ -2,6 +2,8 @@
 
 Mobilework 是一个由 OpenCode 驱动的本地 Wiki 对话、增量构建与分级检索工具。要求 Python 3.11+ 和 OpenCode 1.18.25+。
 
+多知识库模式使用 `kb/<kb_id>` 独立存储。`/retrieve` 选择 Fast / Balanced / Reasoning / Research，`/retrieve-options` 调整细化开关。配置、预算与 Skill/后端职责见 [多库检索开关](docs/multi-kb-retrieval-controls.md)。
+
 ## Windows 安装与启动
 
 在项目根目录打开 PowerShell：
@@ -40,7 +42,7 @@ mobilework
 ## 对话式工作流
 
 - 直接输入问题：使用当前检索等级回答。
-- `/retrieve`：打开二级选择菜单，选择 `Naive / Low / Medium / High`。默认是 `Low`，选择保存在 `.wiki-state/preferences.json`，重启后仍有效。
+- `/retrieve`：选择 `Fast / Balanced / Reasoning / Research`，默认 `Balanced`。设置保存在 `.mobilework-state/preferences.json`；切换档位重置高级覆盖，`/retrieve-options` 可独立调整能力。
 - `/sync`：只读扫描资料变化，显示新增、修改、移动、恢复、删除和 pending 信息；确认后在当前会话中启动一次 `wiki-builder`。
 - `@wiki/...`：引用已生成 Wiki。
 - `@sources/...`：引用原始资料。
@@ -52,12 +54,12 @@ mobilework
 
 | 等级 | 策略 |
 | --- | --- |
-| Naive | 单次纯向量检索 |
-| Low | 单次向量与关键词融合检索（默认） |
-| Medium | 自动加载公共检索规划 Skill，最多两轮补缺检索 |
-| High | 自动加载公共检索规划 Skill，最多五轮自适应查找与补充证据 |
+| Fast | 5 秒预算，最多一次纯向量检索 |
+| Balanced | 12 秒预算，最多一次向量与关键词融合检索（默认） |
+| Reasoning | 30 秒预算，最多四次检索，最多三个子问题 |
+| Research | 90 秒预算，最多八次检索，包含充分性检查 |
 
-Medium 和 High 会先加载公共规划规则，再加载对应分级规则。规划只负责查询改写、问题拆分、资料路由以及证据停止条件，不直接查找资料，也不生成最终答案。任何等级都不会静默升级。普通界面只显示“搜索知识库”“核对来源”等自然语言状态；内部 Skill、工具、路由参数和资料 ID 不进入回答正文。
+所有档位加载公共规划和统一多库执行规则；是否分解、补检或检查证据由独立开关决定。后端负责目录路由和并行检索，Skill 不为每个库复制流程。任何档位都不会静默升级。普通界面只显示自然语言状态；内部 Skill、工具、路由参数和资料 ID 不进入回答正文。
 
 ## Wiki 同步与恢复
 
