@@ -32,4 +32,13 @@ OCR 原文进入 `ocr_spans`；视觉 caption 不得覆盖 OCR，必须标为 `v
 
 空正文、rejected/reparse_required、路径逃逸、data URI、资源缺失、哈希错误或无效 table block 均阻断发布。
 
-待共同确认：视觉 caption/缩略图是否必需；page/bbox/OCR 缺失的 Gate 级别；Wiki 是否索引定位字段以及资源大小限制。
+## 与杨欣川产物对齐
+
+- 不需要缩略图，必须交付原图。
+- `natural_image/chart/page_screenshot` 必须 Caption；`table_screenshot/decorative_image` 跳过。
+- `chart/page_screenshot/table_screenshot` 必须 OCR；普通图片由 contains_text 决定；装饰图跳过。
+- 每张图片固定保留 image_caption 与 image_ocr 两个槽位；非 ready 不可检索并必须说明 reason/error。
+- package/item/asset/chunk/visual evidence 的稳定 ID 必须闭合；无法可靠关联正文时 context_item_ids 留空。
+- 原始 PDF 图注、OCR 和 VLM Caption 不互相覆盖；claims 明确区分 extracted/inferred/ambiguous。
+
+仍待确认：normalized_1000 bbox 与 pt 页面尺寸的换算语义、table.rows 的稳定 Schema、叶侧 Gate 阈值，以及 Wiki 实际索引字段和资源大小限制。
