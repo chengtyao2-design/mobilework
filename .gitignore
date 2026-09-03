@@ -27,8 +27,11 @@ parsing/local_extract.py
 parsing/manifests/*.md
 !parsing/manifests/.gitkeep
 !parsing/manifests/kb_enterprise.md
+!parsing/manifests/kb_research.md
+parsing/resource/kb_research/
 kb/*/raw/sources/*.md
 !kb/*/raw/sources/.gitkeep
+!kb/kb_research/raw/sources/*.md
 
 # 开发期依据当前 raw/sources 构建出的 wiki 页面（编译产物），保留占位 .gitkeep
 kb/*/wiki/**/*.md
