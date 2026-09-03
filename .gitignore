@@ -29,6 +29,3 @@ wiki/**/*.md
 
 # 检索评测每轮的运行产物（合成语料、jsonl、stderr 转储），体积大且可由 harness 复现
 benchmarks/retrieval_eval/artifacts/
-
-# 检索侧为 GPLv3 上游 Rust 的逐行 Python 移植，自有打分实现替换前不入库
-/wiki_retrieval/
