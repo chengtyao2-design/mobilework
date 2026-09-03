@@ -764,7 +764,16 @@ def _rebuild_page_registry(paths: ProjectPaths, sources: dict[str, dict[str, Any
             "identity": normalize_identity(page.title),
             "aliases": list(page.aliases),
             "claims": [
-                {"id": claim.claim_id, "source_ids": list(claim.source_ids), "chunk_ids": list(claim.chunk_ids)}
+                {**json.loads(path.read_text(encoding="utf-8")[claim.marker_start:claim.marker_end].split("wiki-claim:", 1)[1].rsplit("-->", 1)[0]),
+                 "id": claim.claim_id, "claim_id": claim.claim_id,
+                 "source_ids": list(claim.source_ids), "chunk_ids": list(claim.chunk_ids),
+                 "source_chunk_ids": list(claim.chunk_ids), "source_count": len(set(claim.source_ids)),
+                 "compiled_at": now_iso(),
+                 "source_updated_at": max((str(sources.get(s, {}).get("updated_at") or "") for s in claim.source_ids), default="") or None,
+                 "source_published_at": None, "effective_from": None, "effective_to": None,
+                 "confidence": None, "verification_status": "unverified", "supersedes": [], "contradicts": [],
+                 **{k: v for k, v in json.loads(path.read_text(encoding="utf-8")[claim.marker_start:claim.marker_end].split("wiki-claim:", 1)[1].rsplit("-->", 1)[0]).items()
+                    if k in {"source_updated_at", "source_published_at", "effective_from", "effective_to", "confidence", "verification_status", "supersedes", "contradicts"}}}
                 for claim in claims
             ],
         }

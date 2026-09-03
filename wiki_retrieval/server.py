@@ -30,6 +30,9 @@ def resolve_root() -> Path:
     from . import loader
 
     root = loader.find_root()
+    for candidate in (root, *root.parents):
+        if (candidate / "mobilework.config.json").is_file():
+            return candidate
     for required in (loader.WIKI_DIR, loader.SOURCE_DIR):
         if not (root / required).is_dir():
             raise FileNotFoundError(
@@ -150,6 +153,9 @@ def build_server(root: Path):
         rrf_k: float = DEFAULT_RRF_K,
         include_content: bool = False,
         verbose: bool = False,
+        kb_ids: list[str] | None = None,
+        profile: str | None = None,
+        overrides: dict | None = None,
     ) -> str:
         return _dump(
             _retrieve(
@@ -161,6 +167,9 @@ def build_server(root: Path):
                 include_content=include_content,
                 verbose=verbose,
                 root=root,
+                kb_ids=kb_ids,
+                profile=profile,
+                overrides=overrides,
             )
         )
 
@@ -171,8 +180,17 @@ def build_server(root: Path):
         )
     )
     @_surface_errors
-    def graph_neighbors(seed: str, depth: int = 1, top_k: int = 10) -> str:
-        return _dump(neighbors(root, seed, depth, top_k))
+    def graph_neighbors(seed: str, depth: int = 1, top_k: int = 10, kb_id: str | None = None) -> str:
+        from .federated import registry
+        bases = registry(root)
+        if kb_id is None and len(bases) != 1:
+            raise ValueError("kb_id is required for multi-KB graph traversal")
+        identifier = kb_id or next(iter(bases))
+        if identifier not in bases:
+            raise ValueError("unknown kb_id")
+        result = neighbors(bases[identifier]["root"], seed.removeprefix(identifier + "::"), depth, top_k)
+        result["kb_id"] = identifier
+        return _dump(result)
 
     @server.tool(
         description=(
@@ -182,8 +200,27 @@ def build_server(root: Path):
         )
     )
     @_surface_errors
-    def knowledge_tree() -> str:
-        return _dump(catalog(root))
+    def knowledge_tree(kb_ids: list[str] | None = None) -> str:
+        from .federated import registry
+        bases = registry(root)
+        if not (root / "mobilework.config.json").is_file() and kb_ids is None:
+            return _dump(catalog(root))
+        identifiers = list(bases) if kb_ids is None else kb_ids
+        if not identifiers or set(identifiers) - bases.keys():
+            raise ValueError("unknown kb_ids")
+        return _dump({"knowledge_bases": [{"kb_id": i, **catalog(bases[i]["root"])} for i in identifiers]})
+
+    @server.tool()
+    @_surface_errors
+    def list_knowledge_bases() -> str:
+        from .federated import list_knowledge_bases as listing
+        return _dump(listing(root))
+
+    @server.tool()
+    @_surface_errors
+    def route_knowledge_bases(query: str, kb_ids: list[str] | None = None, top_k: int = 3) -> str:
+        from .federated import route_knowledge_bases as routing
+        return _dump(routing(root, query, kb_ids, top_k))
 
     return server
 
@@ -196,7 +233,8 @@ def main() -> None:
 
         root = resolve_root()
         embedding.load_dotenv(root)
-        corpus = loader.get_corpus(root)
+        from .federated import registry
+        corpus = loader.get_corpus(next(iter(registry(root).values()))["root"])
         server = build_server(root)
         logger.warning(
             "serving %s from %s (%d wiki page(s), %d source file(s))",

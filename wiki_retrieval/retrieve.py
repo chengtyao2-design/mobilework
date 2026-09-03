@@ -115,7 +115,21 @@ def retrieve(
     include_content: bool = False,
     verbose: bool = False,
     root: Path | None = None,
+    kb_ids: list[str] | None = None,
+    profile: str | None = None,
+    overrides: dict | None = None,
 ) -> dict:
+    resolved_root = loader.find_root() if root is None else Path(root)
+    if (resolved_root / "mobilework.config.json").is_file() or kb_ids is not None:
+        from .federated import retrieve as federated_retrieve
+        options = (overrides or {}).get("retrieval", {})
+        if options:
+            channels = [c for c in ALL_CHANNELS if options.get(c, c != "graph")]
+        elif profile:
+            channels = ["vector"] if profile == "fast" else ["vector", "keyword"]
+        return federated_retrieve(resolved_root, query, kb_ids=kb_ids, scope=scope,
+            channels=channels, top_k=top_k, rrf_k=rrf_k, include_content=include_content,
+            verbose=verbose, claim_freshness_mode=options.get("claim_freshness_mode", "off"))
     started = time.perf_counter()
     if not query or not query.strip():
         raise ValueError("query is required")
@@ -131,7 +145,8 @@ def retrieve(
             f"{corpus.root / loader.SOURCE_DIR}"
         )
 
-    previous = dedup.lookup(scope, active, query)
+    dedup_scope = f"{corpus.root}::{scope}"
+    previous = dedup.lookup(dedup_scope, active, query)
 
     runs: list[fusion.Run] = []
     embedding_status: dict = {"status": "disabled", "error": "vector channel not requested"}
@@ -187,7 +202,7 @@ def retrieve(
         }
 
     dedup.remember(
-        scope,
+        dedup_scope,
         active,
         query,
         {

@@ -50,7 +50,7 @@ def run(
     status["elapsed_ms"] = embed_ms
 
     hits = store.search(
-        corpus.root, query_vector, max(top_k, MIN_OVERFETCH_BASE) * OVERFETCH
+        corpus.root, query_vector, max(top_k, MIN_OVERFETCH_BASE) * OVERFETCH, scope=scope
     )
     docs = {doc.page_id: doc for doc in corpus.docs(scope)}
 
@@ -79,6 +79,7 @@ def run(
             "chunk_index": hit["chunk_index"],
             "heading_path": hit["heading_path"],
             "text": chunk_text,
+            "claim_ids": indexed_chunk.get("claim_ids", []) if indexed_chunk else [],
         }
         if doc.path not in entries:
             entry = result_stub(doc)
