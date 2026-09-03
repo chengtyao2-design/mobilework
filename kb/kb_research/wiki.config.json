@@ -1,0 +1,24 @@
+{
+  "sources_dir": "raw/sources",
+  "wiki_dir": "wiki",
+  "state_dir": ".wiki-state",
+  "trash_dir": ".wiki-trash",
+  "language": "zh-CN",
+  "semantic_revision": 2,
+  "include_extensions": [
+    ".md",
+    ".markdown",
+    ".txt"
+  ],
+  "ignore_names": [
+    ".DS_Store",
+    "Thumbs.db"
+  ],
+  "assistant": {
+    "models": {
+      "default": "openrouter/qwen/qwen3.8-flash",
+      "primary": "openrouter/qwen/qwen3.8-max",
+      "small": "openrouter/qwen/qwen3.7-flash"
+    }
+  }
+}

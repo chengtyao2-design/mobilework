@@ -9,9 +9,13 @@ __pycache__/
 # 引擎运行态与可恢复回收站，由 wiki_maintainer 写入
 .wiki-state/
 .wiki-trash/
+.mobilework-state/
+kb/*/.wiki-state/
+kb/*/.wiki-trash/
 
 # 向量库落盘目录
 .lancedb/
+kb/*/.lancedb/
 
 # 本地配置，从 *.example 复制
 .env
@@ -20,12 +24,15 @@ opencode.json
 # 解析组到位前的临时解析脚本与台账，以及抽取产出的 md 源文件
 # （正式解析流水线上线后这两条由解析组规范替代；.gitkeep 与 extract.py 占位不在此列）
 parsing/local_extract.py
-parsing/extraction-manifest.md
-raw/sources/*.md
+parsing/manifests/*.md
+!parsing/manifests/.gitkeep
+!parsing/manifests/kb_enterprise.md
+kb/*/raw/sources/*.md
+!kb/*/raw/sources/.gitkeep
 
 # 开发期依据当前 raw/sources 构建出的 wiki 页面（编译产物），保留占位 .gitkeep
-wiki/**/*.md
-!wiki/**/.gitkeep
+kb/*/wiki/**/*.md
+!kb/*/wiki/**/.gitkeep
 
 # 检索评测每轮的运行产物（合成语料、jsonl、stderr 转储），体积大且可由 harness 复现
 benchmarks/retrieval_eval/artifacts/

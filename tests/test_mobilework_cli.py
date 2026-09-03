@@ -12,11 +12,13 @@ from wiki_maintainer.launcher import (
     LaunchError,
     _version_tuple,
     build_command,
+    child_environment,
     check_python_environment,
     model_profiles,
     validate_model_auth,
     write_runtime_config,
 )
+from wiki_maintainer.project import KnowledgeBaseError, resolve_kb_root
 
 
 def _write_config(root: Path, model: str = "openrouter/qwen/qwen3.8-flash") -> None:
@@ -117,11 +119,12 @@ def test_runtime_config_registers_references_and_tui_compatibility(tmp_path: Pat
 
     runtime_path = write_runtime_config(root, python)
     runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
-    cli = json.loads((root / ".wiki-state/opencode-config/opencode/cli.json").read_text(encoding="utf-8"))
-    tui = json.loads((root / ".wiki-state/opencode-config/opencode/tui.json").read_text(encoding="utf-8"))
+    cli = json.loads((root / ".mobilework-state/opencode-config/opencode/cli.json").read_text(encoding="utf-8"))
+    tui = json.loads((root / ".mobilework-state/opencode-config/opencode/tui.json").read_text(encoding="utf-8"))
 
     assert set(runtime["references"]) == {"wiki", "sources", "docs"}
     assert runtime["permission"]["read"][".wiki-state/**"] == "deny"
+    assert runtime["permission"]["read"][".mobilework-state/**"] == "deny"
     assert runtime["model"] == "openrouter/qwen/qwen3.8-flash"
     assert runtime["small_model"] == "openrouter/qwen/qwen3.7-flash"
     assert runtime["enabled_providers"] == ["openrouter"]
@@ -132,6 +135,101 @@ def test_runtime_config_registers_references_and_tui_compatibility(tmp_path: Pat
     assert runtime["tool_output"] == {"max_lines": 400, "max_bytes": 16000}
     assert cli["plugins"] == runtime["plugin"]
     assert tui["plugin"] == runtime["plugin"]
+
+
+def test_resolve_kb_root_uses_default_and_explicit_selection(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    for kb_id in ("kb_a", "kb_b"):
+        kb_root = app / "kb" / kb_id
+        kb_root.mkdir(parents=True)
+        (kb_root / "wiki.config.json").write_text("{}", encoding="utf-8")
+    (app / "mobilework.config.json").write_text(
+        json.dumps(
+            {
+                "default_kb": "kb_a",
+                "knowledge_bases": {
+                    "kb_a": {"path": "kb/kb_a"},
+                    "kb_b": {"path": "kb/kb_b"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert resolve_kb_root(app) == (app / "kb" / "kb_a").resolve()
+    assert resolve_kb_root(app, kb="kb_b") == (app / "kb" / "kb_b").resolve()
+    assert resolve_kb_root(app, kb_root=app / "kb" / "kb_b") == (app / "kb" / "kb_b").resolve()
+
+
+def test_resolve_kb_root_rejects_unknown_or_escaping_kb(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "mobilework.config.json").write_text(
+        json.dumps(
+            {
+                "default_kb": "outside",
+                "knowledge_bases": {"outside": {"path": "../outside"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KnowledgeBaseError, match="escapes"):
+        resolve_kb_root(app)
+
+
+def test_wiki_cli_targets_selected_kb(tmp_path: Path, capsys) -> None:
+    app = tmp_path / "app"
+    kb_root = app / "kb" / "kb_a"
+    kb_root.mkdir(parents=True)
+    (kb_root / "wiki.config.json").write_text("{}", encoding="utf-8")
+    (app / "mobilework.config.json").write_text(
+        json.dumps(
+            {
+                "default_kb": "kb_a",
+                "knowledge_bases": {"kb_a": {"path": "kb/kb_a"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert wiki_main(["--root", str(app), "--kb", "kb_a", "init"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert Path(payload["root"]) == kb_root.resolve()
+    assert (kb_root / "raw" / "sources").is_dir()
+    assert not (app / ".wiki-state").exists()
+
+
+def test_runtime_config_keeps_app_state_separate_from_selected_kb(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    kb_root = app / "kb" / "kb_a"
+    python = app / ".venv" / "Scripts" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.touch()
+    (app / ".opencode" / "plugins" / "mobilework").mkdir(parents=True)
+    kb_root.mkdir(parents=True)
+    _write_config(kb_root)
+    (app / "mobilework.config.json").write_text(
+        json.dumps(
+            {
+                "default_kb": "kb_a",
+                "knowledge_bases": {"kb_a": {"path": "kb/kb_a"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runtime_path = write_runtime_config(app, python, kb_root)
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    environment = child_environment(app, python, kb_root)
+
+    assert runtime_path == app / ".mobilework-state" / "opencode.runtime.json"
+    assert Path(runtime["references"]["wiki"]["path"]) == (kb_root / "wiki").resolve()
+    assert Path(runtime["references"]["sources"]["path"]) == (kb_root / "raw" / "sources").resolve()
+    assert environment["MOBILEWORK_ROOT"] == str(app)
+    assert environment["MOBILEWORK_KB"] == "kb_a"
+    assert environment["MOBILEWORK_KB_ROOT"] == str(kb_root.resolve())
+    assert environment["OPENCODE_CONFIG"] == str(runtime_path)
 
 
 def test_launcher_starts_one_fresh_tui_without_nested_run(tmp_path: Path) -> None:

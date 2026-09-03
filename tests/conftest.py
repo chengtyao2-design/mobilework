@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-RAW_SOURCES = REPO_ROOT / "raw" / "sources"
+RAW_SOURCES = REPO_ROOT / "kb" / "kb_enterprise" / "raw" / "sources"
 WIKI_CATEGORIES = ("concepts", "entities", "references", "skills", "sources", "synthesis")
 
 

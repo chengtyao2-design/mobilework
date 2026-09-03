@@ -11,10 +11,17 @@ from pathlib import Path
 from typing import Mapping
 
 from .core import atomic_json, load_config
+from .project import (
+    MOBILEWORK_CONFIG,
+    KnowledgeBaseError,
+    knowledge_base_entries,
+    knowledge_base_id,
+    resolve_kb_root,
+)
 
 
 MIN_OPENCODE_VERSION = (1, 18, 25)
-PROJECT_MARKERS = ("pyproject.toml", "wiki.config.json", ".opencode")
+PROJECT_MARKERS = ("pyproject.toml", ".opencode")
 DEFAULT_MODELS = {
     "default": "openrouter/qwen/qwen3.8-flash",
     "primary": "openrouter/qwen/qwen3.8-max",
@@ -31,12 +38,18 @@ class LaunchError(RuntimeError):
 def find_project_root(start: Path) -> Path:
     current = start.expanduser().resolve()
     for candidate in (current, *current.parents):
-        if all((candidate / marker).exists() for marker in PROJECT_MARKERS):
+        if all((candidate / marker).exists() for marker in PROJECT_MARKERS) and (
+            (candidate / MOBILEWORK_CONFIG).is_file() or (candidate / "wiki.config.json").is_file()
+        ):
             return candidate
     package_root = Path(__file__).resolve().parent.parent
-    if all((package_root / marker).exists() for marker in PROJECT_MARKERS):
+    if all((package_root / marker).exists() for marker in PROJECT_MARKERS) and (
+        (package_root / MOBILEWORK_CONFIG).is_file() or (package_root / "wiki.config.json").is_file()
+    ):
         return package_root
-    raise LaunchError("找不到 Mobilework 项目根目录（需要 pyproject.toml、wiki.config.json 和 .opencode/）")
+    raise LaunchError(
+        "找不到 Mobilework 项目根目录（需要 pyproject.toml、.opencode/，以及 mobilework.config.json）"
+    )
 
 
 def project_python(root: Path) -> Path:
@@ -104,15 +117,21 @@ def _version_tuple(text: str) -> tuple[int, int, int] | None:
     return tuple(int(value) for value in match.groups()) if match else None
 
 
-def child_environment(root: Path, python: Path) -> dict[str, str]:
+def child_environment(root: Path, python: Path, kb_root: Path | None = None) -> dict[str, str]:
+    kb_root = (kb_root or root).resolve()
     environment = dict(os.environ)
     environment["MOBILEWORK_ROOT"] = str(root)
     environment["MOBILEWORK_PYTHON"] = str(python)
+    environment["MOBILEWORK_KB_ROOT"] = str(kb_root)
+    selected = knowledge_base_id(root, kb_root)
+    if selected:
+        environment["MOBILEWORK_KB"] = selected
     environment["WIKI_RETRIEVAL_PROJECT"] = str(root)
-    environment["OPENCODE_CONFIG"] = str(root / ".wiki-state" / "opencode.runtime.json")
+    environment["WIKI_RETRIEVAL_KB_ROOT"] = str(kb_root)
+    environment["OPENCODE_CONFIG"] = str(root / ".mobilework-state" / "opencode.runtime.json")
     # Keep CLI settings project-local. This also avoids Windows installations
     # where ~/.config/opencode was accidentally created as a file.
-    environment["XDG_CONFIG_HOME"] = str(root / ".wiki-state" / "opencode-config")
+    environment["XDG_CONFIG_HOME"] = str(root / ".mobilework-state" / "opencode-config")
     return environment
 
 
@@ -142,17 +161,28 @@ def check_opencode(executable: str, root: Path, environment: Mapping[str, str]) 
     return version
 
 
-def validate_layout(root: Path) -> None:
+def validate_layout(root: Path, kb_root: Path | None = None) -> None:
+    kb_root = (kb_root or root).resolve()
     required = (
-        root / "raw" / "sources",
-        root / "wiki",
+        kb_root / "raw" / "sources",
+        kb_root / "wiki",
+        kb_root / "purpose.md",
+        kb_root / "schema.md",
+        kb_root / "wiki.config.json",
         root / ".opencode" / "agents" / "mobilework.md",
         root / ".opencode" / "agents" / "wiki-builder.md",
         root / ".opencode" / "plugins" / "mobilework" / "index.ts",
         root / ".opencode" / "plugins" / "mobilework" / "tui.ts",
         root / ".opencode" / "skills" / "wiki-retrieval-planner" / "SKILL.md",
     )
-    missing = [path.relative_to(root).as_posix() for path in required if not path.exists()]
+    missing = []
+    for path in required:
+        if path.exists():
+            continue
+        try:
+            missing.append(path.relative_to(root).as_posix())
+        except ValueError:
+            missing.append(str(path))
     if missing:
         raise LaunchError("项目布局不完整，缺少：" + "、".join(missing))
 
@@ -213,10 +243,18 @@ def validate_model_auth(root: Path) -> str:
     return model
 
 
-def write_runtime_config(root: Path, python: Path) -> Path:
-    path = root / ".wiki-state" / "opencode.runtime.json"
+def write_runtime_config(root: Path, python: Path, kb_root: Path | None = None) -> Path:
+    kb_root = (kb_root or root).resolve()
+    path = root / ".mobilework-state" / "opencode.runtime.json"
     plugin_uri = (root / ".opencode" / "plugins" / "mobilework").resolve().as_uri()
-    models = model_profiles(root)
+    models = model_profiles(kb_root)
+    selected = knowledge_base_id(root, kb_root)
+    retrieval_environment = {
+        "WIKI_RETRIEVAL_PROJECT": str(root),
+        "WIKI_RETRIEVAL_KB_ROOT": str(kb_root),
+    }
+    if selected:
+        retrieval_environment["MOBILEWORK_KB"] = selected
     payload = {
         "$schema": "https://opencode.ai/config.json",
         "model": models["default"],
@@ -240,16 +278,16 @@ def write_runtime_config(root: Path, python: Path) -> Path:
                 "type": "local",
                 "command": [str(python), "-m", "wiki_retrieval.server"],
                 "enabled": True,
-                "environment": {"WIKI_RETRIEVAL_PROJECT": str(root)},
+                "environment": retrieval_environment,
             }
         },
         "references": {
             "wiki": {
-                "path": str((root / "wiki").resolve()),
+                "path": str((kb_root / "wiki").resolve()),
                 "description": "已构建的 Mobilework Wiki 页面",
             },
             "sources": {
-                "path": str((root / "raw" / "sources").resolve()),
+                "path": str((kb_root / "raw" / "sources").resolve()),
                 "description": "Mobilework 原始资料（只读引用）",
             },
             "docs": {
@@ -266,12 +304,15 @@ def write_runtime_config(root: Path, python: Path) -> Path:
                 ".git/**": "deny",
                 ".wiki-state/**": "deny",
                 ".wiki-trash/**": "deny",
+                ".mobilework-state/**": "deny",
+                "kb/*/.wiki-state/**": "deny",
+                "kb/*/.wiki-trash/**": "deny",
             }
         },
     }
     atomic_json(path, payload)
     atomic_json(
-        root / ".wiki-state" / "opencode-config" / "opencode" / "cli.json",
+        root / ".mobilework-state" / "opencode-config" / "opencode" / "cli.json",
         {
             "$schema": "https://opencode.ai/v2/cli.json",
             "plugins": [plugin_uri],
@@ -280,7 +321,7 @@ def write_runtime_config(root: Path, python: Path) -> Path:
     # OpenCode 1.18.x still reads tui.json, while the v2 client uses cli.json.
     # Generate both from the same source so upgrades do not break the launcher.
     atomic_json(
-        root / ".wiki-state" / "opencode-config" / "opencode" / "tui.json",
+        root / ".mobilework-state" / "opencode-config" / "opencode" / "tui.json",
         {
             "$schema": "https://opencode.ai/tui.json",
             "plugin": [plugin_uri],
@@ -289,8 +330,13 @@ def write_runtime_config(root: Path, python: Path) -> Path:
     return path
 
 
-def build_command(executable: str, root: Path, profile: str = "default") -> list[str]:
-    models = model_profiles(root)
+def build_command(
+    executable: str,
+    root: Path,
+    profile: str = "default",
+    kb_root: Path | None = None,
+) -> list[str]:
+    models = model_profiles(kb_root or root)
     if profile not in ("default", "primary"):
         raise LaunchError("启动模型档位只能是 default 或 primary")
     model = models[profile]
@@ -303,6 +349,9 @@ def build_command(executable: str, root: Path, profile: str = "default") -> list
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="mobilework", description="启动 Mobilework 对话式知识库")
     result.add_argument("--root", default=".", help="Mobilework 项目目录")
+    kb_target = result.add_mutually_exclusive_group()
+    kb_target.add_argument("--kb", help="启动时选中的知识库 id（默认使用 default_kb）")
+    kb_target.add_argument("--kb-root", help="显式知识库根目录")
     result.add_argument("--check", action="store_true", help="只执行启动检查，不进入 TUI")
     result.add_argument(
         "--model-profile",
@@ -317,15 +366,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(sys.argv[1:] if argv is None else argv)
     try:
         root = find_project_root(Path(args.root))
+        kb_root = resolve_kb_root(
+            root,
+            kb=args.kb,
+            kb_root=Path(args.kb_root) if args.kb_root else None,
+        )
         python = project_python(root)
         python_version = check_python_environment(python, root)
-        validate_layout(root)
-        validate_model_auth(root)
-        models = model_profiles(root)
+        validate_layout(root, kb_root)
+        validate_model_auth(kb_root)
+        models = model_profiles(kb_root)
         model = models[args.model_profile]
         executable = find_opencode()
-        environment = child_environment(root, python)
-        write_runtime_config(root, python)
+        environment = child_environment(root, python, kb_root)
+        write_runtime_config(root, python, kb_root)
         version = check_opencode(executable, root, environment)
         if args.check:
             print(
@@ -333,6 +387,8 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "status": "ok",
                         "root": str(root),
+                        "kb": knowledge_base_id(root, kb_root),
+                        "kb_root": str(kb_root),
                         "python": str(python),
                         "python_version": python_version,
                         "opencode": executable,
@@ -345,8 +401,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
-        return subprocess.call(build_command(executable, root, args.model_profile), cwd=root, env=environment)
-    except LaunchError as error:
+        return subprocess.call(
+            build_command(executable, root, args.model_profile, kb_root), cwd=root, env=environment
+        )
+    except (LaunchError, KnowledgeBaseError) as error:
         print(f"mobilework: {error}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
