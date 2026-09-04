@@ -8,6 +8,10 @@ if (!reportPath || !outputPath || !previewDir) {
 }
 
 const report = JSON.parse(await fs.readFile(reportPath, "utf8"));
+// Preserve raw logs; make channel degradation explicit in the workbook view.
+for (const rows of [report.retrieval_runs, report.failures]) for (const row of rows ?? []) {
+  if (row.status === "ok" && row.degradations?.length) row.status = "degraded";
+}
 if (report.run_summary.allowed_channels !== "all") {
   for (const group of [report.aggregate, report.pareto]) for (const row of group ?? []) {
     if (row.config_id !== "C02") row.name += " (vector disabled)";
