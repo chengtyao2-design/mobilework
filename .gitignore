@@ -3,6 +3,13 @@ __pycache__/
 .venv/
 *.egg-info/
 
+# Node.js 依赖缓存与包管理器调试日志
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
 # macOS
 .DS_Store
 
