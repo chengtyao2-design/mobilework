@@ -268,7 +268,7 @@ def test_plugin_autoload_order_and_tier_boundaries(repo_root: Path) -> None:
     assert "opencode run" not in tui
     assert 'api.event.on("session.status"' in tui
     assert "45_000" in tui
-    assert "90_000" in tui
+    assert "15_000" in tui
     assert "if (waitTimers.has(sessionID)) return" in tui
     assert "api.client.session.abort" in tui
     assert "MOBILEWORK_RETRY_ANSWER_ONLY" in tui
@@ -284,7 +284,8 @@ def test_skill_tier_limits_and_planner_contract(repo_root: Path) -> None:
     medium = (repo_root / ".opencode/skills/wiki-ask-medium/SKILL.md").read_text(encoding="utf-8")
     high = (repo_root / ".opencode/skills/wiki-ask-high/SKILL.md").read_text(encoding="utf-8")
 
-    assert "Do not call tools and do not answer the question" in planner
+    assert "immediately continue" in planner
+    assert "Do not call tools and do not answer the question" not in planner
     assert "Never change it or silently escalate" in planner
     unified = (repo_root / ".opencode/skills/wiki-ask-federated/SKILL.md").read_text(encoding="utf-8")
     assert "route_knowledge_bases" in unified

@@ -14,4 +14,8 @@ Balanced 默认 vector、keyword、raw_evidence_fallback 开启，其他布尔�
 
 Claim 是语义断言，与 Chunk 多对多关联。历史问题按指定时间回答；新鲜度不等于正确性。缺失日期视为未知，同源转载不能当作独立支持；冲突需说明来源、适用范围与日期。
 
+高级开关现在显示中文：向量检索、关键词检索、图关系扩展；问题分解、原始资料回查、证据充分性检查和自动补检标注“Agent 执行”。模型重排、跨库实体扩展、回答写回标注“暂未接入”，不可启用，旧配置中的 true 也不会生效。界面阻止关闭最后一种检索通道。断言新鲜度的四种模式使用中文名称。
+
+无进展检测在 15 秒提示当前是否已取得资料，连续 45 秒无消息/工具进展后停止响应并提供重试。已有检索时可以复用证据；首次模型响应尚未返回时重新处理原问题。正常流式输出或工具进展会刷新计时，模型重试状态不会取消检测。修改后需退出并重新启动 Mobilework 以加载新版 TUI 插件。
+
 测试：`node --experimental-strip-types --test tests/retrieval_config.test.mjs`（Node 22+），以及 `python -m pytest tests/test_mobilework_cli.py`。

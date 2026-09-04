@@ -8,7 +8,7 @@ metadata:
 
 # Wiki retrieval planner
 
-Create an internal retrieval plan for the user's original question. Do not call tools and do not answer the question.
+Create a brief internal retrieval plan for the user's original question. Planning is only the first stage of this same turn: immediately continue with the injected wiki-ask-federated execution instructions, call the required tools, and answer the user. For a single-fact question, proceed directly to catalog routing and retrieval without extended planning.
 
 The plan is private execution state. Never print, summarize, announce, or otherwise expose it to the user. Never call the `skill` tool; Mobilework has already injected the correct ordered Skill set for this turn.
 
@@ -35,5 +35,5 @@ Use knowledge_tree for inventory, graph_neighbors only when graph is enabled, so
 
 - The selected tier is a fixed execution budget. Never change it or silently escalate it.
 - Use the injected deadline_ms, max_tool_calls, max_subqueries, max_graph_depth and max_evidence_chars; legacy tier rounds do not override these budgets.
-- Do not call a retrieval tool, generate the final answer, or present inference as evidence.
+- During planning only, do not present inference as evidence. After planning, execute retrieval and generate the final answer in this same turn.
 - If the chosen tier cannot close a gap, leave the gap explicit for the tier Skill to report.
