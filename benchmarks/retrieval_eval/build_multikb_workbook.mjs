@@ -8,7 +8,7 @@ if (!reportPath || !outputPath || !previewDir) {
 }
 
 const report = JSON.parse(await fs.readFile(reportPath, "utf8"));
-if (report.run_summary.degraded_runs) {
+if (report.run_summary.allowed_channels !== "all") {
   for (const group of [report.aggregate, report.pareto]) for (const row of group ?? []) {
     if (row.config_id !== "C02") row.name += " (vector disabled)";
   }
@@ -89,6 +89,8 @@ function setupSheet(name, title, headers, rows, options = {}) {
 }
 
 const summaryRows = Object.entries(report.run_summary ?? {}).map(([field, value]) => [field, value]);
+summaryRows.push(["p95 percentile", 0.95]);
+const percentileRow = summaryRows.length + 2;
 summaryRows.push(
   ["Weight - factual correctness", 0.35],
   ["Weight - citation recall", 0.25],
@@ -194,6 +196,12 @@ const freshnessSheet = setupSheet(
 );
 if ((report.freshness_ablation ?? []).length) {
   const lastRow = report.freshness_ablation.length + 2;
+  const end = answerRows.length + 2;
+  for (let row = 3; row <= lastRow; row++) {
+    const match = `'Answer Scores'!$C$3:$C$${end},A${row}`;
+    freshnessSheet.getRange(`B${row}:D${row}`).formulas = [[`=COUNTIF(${match})`, `=AVERAGEIF(${match},'Answer Scores'!$J$3:$J$${end})`, `=AVERAGEIF(${match},'Answer Scores'!$K$3:$K$${end})`]];
+    freshnessSheet.getRange(`F${row}`).formulas = [[`=SMALL(FILTER('Answer Scores'!$L$3:$L$${end},'Answer Scores'!$C$3:$C$${end}=A${row}),ROUNDUP(B${row}*'Run Summary'!$B$${percentileRow},0))`]];
+  }
   freshnessSheet.getRange(`C3:E${lastRow}`).format.numberFormat = "0.0%";
   freshnessSheet.getRange(`G3:H${lastRow}`).format.numberFormat = "0.0%";
   freshnessSheet.getRange(`F3:F${lastRow}`).format.numberFormat = "0.0";
@@ -217,6 +225,7 @@ if ((report.aggregate ?? []).length) {
     const match = `'Answer Scores'!$C$3:$C$${end},A${row}`;
     aggregateSheet.getRange(`C${row}:E${row}`).formulas = [[`=COUNTIF(${match})`, `=AVERAGEIF(${match},'Answer Scores'!$J$3:$J$${end})`, `=AVERAGEIF(${match},'Answer Scores'!$K$3:$K$${end})`]];
     aggregateSheet.getRange(`G${row}`).formulas = [[`=AVERAGEIF(${match},'Answer Scores'!$M$3:$M$${end})`]];
+    aggregateSheet.getRange(`F${row}`).formulas = [[`=SMALL(FILTER('Answer Scores'!$L$3:$L$${end},'Answer Scores'!$C$3:$C$${end}=A${row}),ROUNDUP(C${row}*'Run Summary'!$B$${percentileRow},0))`]];
   }
   aggregateSheet.getRange(`D3:E${lastRow}`).format.numberFormat = "0.0%";
   aggregateSheet.getRange(`H3:H${lastRow}`).format.numberFormat = "0.0%";
@@ -259,7 +268,7 @@ for (const name of [
   "Freshness Ablation", "Aggregate", "Pareto", "Failures",
 ]) {
   const lastColumn = {"Run Summary":"B", "Source Manifest":"M", "Questions":"J", "Retrieval Runs":"M", "Answer Scores":"Q", "Freshness Ablation":"J", "Aggregate":"K", "Pareto":"F", "Failures":"F"}[name];
-  const preview = await workbook.render({ sheetName: name, range: `A1:${lastColumn}${name === "Run Summary" ? summaryRows.length+2 : 8}`, scale: 1, format: "png" });
+  const preview = await workbook.render({ sheetName: name, range: `A1:${lastColumn}${name === "Run Summary" ? summaryRows.length+2 : name === "Aggregate" ? 11 : 8}`, scale: 1, format: "png" });
   await fs.writeFile(path.join(previewDir, `${name.replaceAll(" ", "-")}.png`), new Uint8Array(await preview.arrayBuffer()));
 }
 
