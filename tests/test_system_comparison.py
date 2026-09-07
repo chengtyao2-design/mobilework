@@ -71,7 +71,7 @@ def test_mobilework_adapter_passes_real_routing_controls_to_fake_retriever(tmp_p
         return {"results": [{"kb_id": "kb_enterprise", "path": "wiki/a.md", "title": "A"}],
                 "queried_kb_ids": ["kb_enterprise"], "routing": {"selected_kb_ids": ["kb_enterprise"]}, "errors": {}}
 
-    adapter = MobileworkAdapter(tmp_path, retrieve_fn=retrieve)
+    adapter = MobileworkAdapter(tmp_path, retrieve_fn=retrieve, retrieval_scope="wiki")
     question = multikb.load_questions()[0]
     outcome = adapter.run(question["question"], question,
                           spec(condition={"channels": ["keyword"], "routing": "gold"}), 5)
@@ -79,7 +79,33 @@ def test_mobilework_adapter_passes_real_routing_controls_to_fake_retriever(tmp_p
     assert outcome.status == "ok"
     assert calls[0]["channels"] == ["keyword"]
     assert calls[0]["kb_ids"] == question["target_kbs"]
+    assert calls[0]["scope"] == "wiki"
     assert outcome.results[0]["source"] == "kb_enterprise:wiki/a.md"
+
+
+def test_mobilework_network_excluded_timing_reuses_precomputed_query_vector(tmp_path: Path, monkeypatch):
+    from wiki_retrieval import embedding
+
+    query = multikb.load_questions()[0]["question"]
+    original_fetch = embedding.fetch
+    monkeypatch.setattr(embedding, "fetch_batch", lambda texts: ([[0.1, 0.2]], 1234.0))
+    observed = {}
+
+    def retrieve(**kwargs):
+        observed["embedding"] = embedding.fetch(kwargs["query"])
+        return {"results": [], "queried_kb_ids": ["kb_enterprise"], "routing": {}, "errors": {},
+                "timings": {"total_ms": 12.0}, "kb_status": {}}
+
+    retrieve.__module__ = "wiki_retrieval.fake"
+    adapter = MobileworkAdapter(tmp_path, retrieve_fn=retrieve, retrieval_scope="wiki",
+                                exclude_embedding_latency=True)
+    adapter.precompute_embeddings([query, query])
+    outcome = adapter.run(query, multikb.load_questions()[0], spec(), 5)
+
+    assert observed["embedding"] == ([0.1, 0.2], 0.0)
+    assert outcome.metadata["latency_basis"] == "network_excluded"
+    assert outcome.metadata["embedding_precompute_batch_ms"] == 1234.0
+    assert embedding.fetch is original_fetch
 
 
 def test_nashsu_adapter_parses_search_and_records_service_unavailable(tmp_path: Path):

@@ -227,7 +227,8 @@ class MobileworkAdapter:
 
     def __init__(self, root: Path, retrieve_fn: Callable[..., dict] | None = None,
                  answer_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
-                 model: str = "openrouter/qwen/qwen3.8-flash", answer_timeout: int = 180):
+                 model: str = "openrouter/qwen/qwen3.8-flash", answer_timeout: int = 180,
+                 retrieval_scope: str = "both", exclude_embedding_latency: bool = False):
         self.root = root.resolve()
         from wiki_retrieval import embedding
         embedding.load_dotenv(self.root)
@@ -238,7 +239,20 @@ class MobileworkAdapter:
         self._answer_runner = answer_runner or subprocess.run
         self.model = model
         self.answer_timeout = answer_timeout
+        self.retrieval_scope = retrieval_scope
+        self.exclude_embedding_latency = exclude_embedding_latency
+        self._precomputed_embeddings: dict[str, list[float]] = {}
+        self._embedding_precompute_ms = 0.0
         self._answer_unavailable_reason: str | None = None
+
+    def precompute_embeddings(self, queries: Sequence[str]) -> None:
+        if not self.exclude_embedding_latency:
+            return
+        from wiki_retrieval import embedding
+        unique = list(dict.fromkeys(str(query) for query in queries))
+        vectors, elapsed_ms = embedding.fetch_batch(unique)
+        self._precomputed_embeddings = dict(zip(unique, vectors, strict=True))
+        self._embedding_precompute_ms = elapsed_ms
 
     def run(self, query: str, question: Mapping[str, Any], spec: ComparisonSpec, top_k: int) -> AdapterOutcome:
         if spec.mode == "answer":
@@ -286,7 +300,7 @@ class MobileworkAdapter:
         elif condition.get("routing") == "gold":
             kb_ids = list(question["target_kbs"])
         try:
-            kwargs: dict[str, Any] = {"query": query, "root": self.root, "scope": "both",
+            kwargs: dict[str, Any] = {"query": query, "root": self.root, "scope": self.retrieval_scope,
                 "top_k": top_k, "include_content": True, "verbose": True}
             if channels:
                 kwargs["channels"] = channels
@@ -299,6 +313,14 @@ class MobileworkAdapter:
                 original_fetch = embedding.fetch
                 try:
                     embedding.fetch = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("injected embedding error"))
+                    response = self._retrieve_fn(**kwargs)
+                finally:
+                    embedding.fetch = original_fetch
+            elif query in self._precomputed_embeddings and getattr(self._retrieve_fn, "__module__", "").startswith("wiki_retrieval"):
+                from wiki_retrieval import embedding
+                original_fetch = embedding.fetch
+                try:
+                    embedding.fetch = lambda text: (self._precomputed_embeddings[text], 0.0)
                     response = self._retrieve_fn(**kwargs)
                 finally:
                     embedding.fetch = original_fetch
@@ -316,7 +338,11 @@ class MobileworkAdapter:
             return AdapterOutcome("failed" if required_vector_failed else "ok", results, "", [], 1,
                 list(response.get("queried_kb_ids", [])), channels,
                 response.get("routing"), degradation, failure_detail,
-                metadata={"partial_failure": bool(errors) or bool(degradation)})
+                metadata={"partial_failure": bool(errors) or bool(degradation),
+                    "latency_basis": "network_excluded" if query in self._precomputed_embeddings else "end_to_end",
+                    "retrieval_scope": self.retrieval_scope,
+                    "embedding_precompute_batch_ms": self._embedding_precompute_ms if query in self._precomputed_embeddings else None,
+                    "timings": response.get("timings"), "kb_status": response.get("kb_status")})
         except Exception as exc:
             return AdapterOutcome("failed", failure_detail=f"{type(exc).__name__}: {exc}", channels=channels)
 
@@ -683,7 +709,9 @@ def apply_stale_fact_labels(records: Sequence[dict[str, Any]], label_path: Path)
 def default_adapters(root: Path, args: argparse.Namespace) -> dict[str, SystemAdapter]:
     baseline_root = Path(args.baseline_root).resolve()
     return {
-        "mobilework": MobileworkAdapter(root, model=args.model, answer_timeout=args.opencode_timeout),
+        "mobilework": MobileworkAdapter(root, model=args.model, answer_timeout=args.opencode_timeout,
+            retrieval_scope=args.mobilework_scope,
+            exclude_embedding_latency=args.mobilework_exclude_embedding_latency),
         "nashsu": NashsuHttpAdapter(args.nashsu_url, args.nashsu_project,
             baseline_root / "nashsu-llm-wiki", corpus_wiki_pages=args.nashsu_wiki_pages),
         "karpathy": KarpathyOpenCodeAdapter(baseline_root / "karpathy-llm-wiki", model=args.model,
@@ -712,6 +740,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--nashsu-wiki-pages", type=int)
     parser.add_argument("--model", default="openrouter/qwen/qwen3.8-flash")
     parser.add_argument("--opencode-timeout", type=int, default=180)
+    parser.add_argument("--mobilework-scope", choices=("wiki", "source", "both"), default="both")
+    parser.add_argument("--mobilework-exclude-embedding-latency", action="store_true",
+        help="precompute query embeddings before timed runs and reuse them across knowledge bases")
     parser.add_argument("--import-historical", type=Path, action="append", default=[])
     parser.add_argument("--stale-labels", type=Path)
     parser.add_argument("--list", action="store_true", help="print the schedule without running adapters")
@@ -731,6 +762,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     questions = {q["id"]: q for q in multikb.load_questions()}
     fuzzy = manifest.get("fuzzy_queries", {})
     top_k = int(manifest["corpus"]["top_k"])
+    mobilework = adapters.get("mobilework")
+    if isinstance(mobilework, MobileworkAdapter) and mobilework.exclude_embedding_latency:
+        timed_queries = []
+        for spec in schedule:
+            if spec.system_id != "mobilework" or spec.mode != "retrieval" or spec.condition.get("fault") == "embedding_error":
+                continue
+            timed_queries.append(fuzzy.get(spec.question_id, questions[spec.question_id]["question"])
+                if spec.query_variant == "fuzzy" else questions[spec.question_id]["question"])
+        mobilework.precompute_embeddings(timed_queries)
     records = []
     for spec in schedule:
         query = fuzzy.get(spec.question_id, questions[spec.question_id]["question"]) if spec.query_variant == "fuzzy" else questions[spec.question_id]["question"]
