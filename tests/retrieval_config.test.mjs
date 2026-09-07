@@ -18,6 +18,7 @@ test('request wins over saved overrides over profile; validate values', () => {
   assert.equal(c.retrieval.graph, true); assert.equal(c.retrieval.keyword, false)
   assert.equal(c.budget.deadline_ms, 4000); assert.equal(c.budget.max_tool_calls, 8)
   assert.equal(resolveConfig({retrieval_tier: 'high'}).retrieval_profile, 'research')
+  assert.equal(resolveConfig({}, {retrieval_tier: 'naive'}).retrieval_profile, 'fast')
   assert.equal(resolveConfig({retrieval_profile:'nonsense'}).retrieval_profile, 'balanced')
 })
 test('guard deadline, call limit, normalization, evidence and backend semantic duplication', () => {
@@ -40,6 +41,10 @@ test('plugin injects current config and enforces unified calls without widening 
   const system = {system:[]}
   await hooks['experimental.chat.system.transform']({sessionID:'test'}, system)
   assert.ok(system.system.join('\n').includes('"retrieval_profile":"research"'))
+  assert.ok(system.system.join('\n').includes('<mobilework-skill name="wiki-retrieval">'))
+  assert.ok(system.system.join('\n').includes('<mobilework-profile name="research">'))
+  assert.ok(system.system.join('\n').includes('max_tool_calls: 8'))
+  assert.ok(!system.system.join('\n').includes('<mobilework-profile name="fast">'))
   const output = {args:{query:'query',kb_ids:['kb_a']}}
   await hooks['tool.execute.before']({sessionID:'test',tool:'wiki_retrieve'}, output)
   assert.deepEqual(output.args.kb_ids, ['kb_a']); assert.equal(output.args.profile, 'research'); assert.equal(output.args.overrides.retrieval.graph,false)

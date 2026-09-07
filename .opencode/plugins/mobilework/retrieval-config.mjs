@@ -24,7 +24,9 @@ export function readPreferences(root) {
   try { return JSON.parse(readFileSync(join(root, '.mobilework-state', 'preferences.json'), 'utf8')) } catch { return {} }
 }
 export function resolveConfig(saved = {}, request = {}) {
-  const candidate = request.retrieval_profile ?? saved.retrieval_profile ?? LEGACY_PROFILES[saved.retrieval_tier]
+  const requested = request.retrieval_profile ?? LEGACY_PROFILES[request.retrieval_tier]
+  const persisted = saved.retrieval_profile ?? LEGACY_PROFILES[saved.retrieval_tier]
+  const candidate = requested ?? persisted
   const profile = PROFILE_NAMES.includes(candidate) ? candidate : 'balanced'
   const result = { retrieval_profile: profile, retrieval: { ...PROFILES[profile].retrieval, claim_freshness_mode: 'off' }, budget: { ...PROFILES[profile].budget } }
   for (const layer of [saved, request]) {

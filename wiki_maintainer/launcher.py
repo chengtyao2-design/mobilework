@@ -173,7 +173,11 @@ def validate_layout(root: Path, kb_root: Path | None = None) -> None:
         root / ".opencode" / "agents" / "wiki-builder.md",
         root / ".opencode" / "plugins" / "mobilework" / "index.ts",
         root / ".opencode" / "plugins" / "mobilework" / "tui.ts",
-        root / ".opencode" / "skills" / "wiki-retrieval-planner" / "SKILL.md",
+        root / ".opencode" / "skills" / "wiki-retrieval" / "SKILL.md",
+        root / ".opencode" / "skills" / "wiki-retrieval" / "references" / "profiles" / "fast.md",
+        root / ".opencode" / "skills" / "wiki-retrieval" / "references" / "profiles" / "balanced.md",
+        root / ".opencode" / "skills" / "wiki-retrieval" / "references" / "profiles" / "reasoning.md",
+        root / ".opencode" / "skills" / "wiki-retrieval" / "references" / "profiles" / "research.md",
     )
     missing = []
     for path in required:

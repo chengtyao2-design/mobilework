@@ -250,7 +250,8 @@ def test_plugin_autoload_order_and_tier_boundaries(repo_root: Path) -> None:
     server = (repo_root / ".opencode/plugins/mobilework/index.ts").read_text(encoding="utf-8")
     tui = (repo_root / ".opencode/plugins/mobilework/tui.ts").read_text(encoding="utf-8")
 
-    assert '["wiki-retrieval-planner", "wiki-ask-federated"]' in server
+    assert '<mobilework-skill name="wiki-retrieval">' in server
+    assert '<mobilework-profile name="${config.retrieval_profile}">' in server
     assert "Never change or silently escalate it" in server
     assert "sessionTier" not in server
     assert "resolveConfig(readPreferences(root)" in server
@@ -280,21 +281,37 @@ def test_plugin_autoload_order_and_tier_boundaries(repo_root: Path) -> None:
 
 
 def test_skill_tier_limits_and_planner_contract(repo_root: Path) -> None:
-    planner = (repo_root / ".opencode/skills/wiki-retrieval-planner/SKILL.md").read_text(encoding="utf-8")
-    medium = (repo_root / ".opencode/skills/wiki-ask-medium/SKILL.md").read_text(encoding="utf-8")
-    high = (repo_root / ".opencode/skills/wiki-ask-high/SKILL.md").read_text(encoding="utf-8")
+    skill_root = repo_root / ".opencode/skills/wiki-retrieval"
+    unified = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+    profiles = {
+        name: (skill_root / f"references/profiles/{name}.md").read_text(encoding="utf-8")
+        for name in ("fast", "balanced", "reasoning", "research")
+    }
 
-    assert "immediately continue" in planner
-    assert "Do not call tools and do not answer the question" not in planner
-    assert "Never change it or silently escalate" in planner
-    unified = (repo_root / ".opencode/skills/wiki-ask-federated/SKILL.md").read_text(encoding="utf-8")
+    assert "Continue immediately from planning to retrieval" in unified
+    assert "Never change or silently escalate" in unified
     assert "route_knowledge_bases" in unified
     assert "max_tool_calls" in unified
     assert "duplicate:true" in unified
-    for content in (unified,):
-        assert "human-readable document titles" in content
-        assert "Do not mention the tier" in content
-        assert "independent corroboration" in content
+    assert "human-readable document titles" in unified
+    assert "Do not mention the profile" in unified
+    assert "independent corroboration" in unified
+    assert "max_tool_calls: 1" in profiles["fast"]
+    assert 'channels: ["vector"]' in profiles["fast"]
+    assert 'channels: ["vector", "keyword"]' in profiles["balanced"]
+    assert "max_tool_calls: 4" in profiles["reasoning"]
+    assert "max_graph_depth: 1" in profiles["reasoning"]
+    assert "max_tool_calls: 8" in profiles["research"]
+    assert "sufficiency_check: true" in profiles["research"]
+    for legacy_name in (
+        "wiki-retrieval-planner",
+        "wiki-ask-federated",
+        "wiki-ask-naive",
+        "wiki-ask-low",
+        "wiki-ask-medium",
+        "wiki-ask-high",
+    ):
+        assert not (repo_root / ".opencode/skills" / legacy_name / "SKILL.md").exists()
 
 
 def test_primary_agent_blocks_conflicting_system_capabilities(repo_root: Path) -> None:

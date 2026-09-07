@@ -5,14 +5,7 @@ import { readPreferences, resolveConfig, RetrievalGuard } from "./retrieval-conf
 
 const SYNC_MARKER = "[MOBILEWORK_SYNC_CONFIRMED]"
 const RETRY_ANSWER_MARKER = "[MOBILEWORK_RETRY_ANSWER_ONLY]"
-const MANAGED_RETRIEVAL_SKILLS = new Set([
-  "wiki-ask-naive",
-  "wiki-ask-low",
-  "wiki-ask-medium",
-  "wiki-ask-high",
-  "wiki-retrieval-planner",
-  "wiki-ask-federated",
-])
+const MANAGED_RETRIEVAL_SKILLS = new Set(["wiki-retrieval"])
 const FRIENDLY_TOOL_TITLES: Record<string, string> = {
   retrieve: "搜索知识库",
   graph_neighbors: "查找相关资料",
@@ -21,8 +14,8 @@ const FRIENDLY_TOOL_TITLES: Record<string, string> = {
   list_knowledge_bases: "浏览可用知识库",
 }
 
-function skillBody(root: string, name: string): string {
-  return readFileSync(join(root, ".opencode", "skills", name, "SKILL.md"), "utf8")
+function skillBody(root: string, relativePath: string): string {
+  return readFileSync(join(root, ".opencode", "skills", "wiki-retrieval", relativePath), "utf8")
 }
 
 function promptText(parts: any[]): string {
@@ -42,11 +35,11 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
   const guards = new Map<string, RetrievalGuard>()
   const requests = new Map<string, any>()
 
-  const load = (name: string): string => {
-    const cached = skillCache.get(name)
+  const load = (relativePath: string): string => {
+    const cached = skillCache.get(relativePath)
     if (cached !== undefined) return cached
-    const body = skillBody(root, name)
-    skillCache.set(name, body)
+    const body = skillBody(root, relativePath)
+    skillCache.set(relativePath, body)
     return body
   }
 
@@ -92,10 +85,11 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
       // Read the preference at generation time. chat.message and system.transform
       // are not ordered API guarantees, so a per-session tier cache lags by one turn.
       const config = resolveConfig(readPreferences(root), requests.get(input.sessionID ?? "") ?? {})
-      const names = ["wiki-retrieval-planner", "wiki-ask-federated"]
+      const profileReference = `references/profiles/${config.retrieval_profile}.md`
       output.system.push(
         `Mobilework retrieval configuration for THIS TURN is ${JSON.stringify(config)}. Never change or silently escalate it. This value overrides historical settings. Pass retrieval_profile as profile and retrieval/budget as overrides to retrieve. Managed skills are already loaded; never call skill to replace them. Keep plans, tool names, parameters, and internal IDs out of user-facing prose.`,
-        ...names.map((name) => `\n<mobilework-skill name="${name}">\n${load(name)}\n</mobilework-skill>`),
+        `\n<mobilework-skill name="wiki-retrieval">\n${load("SKILL.md")}\n</mobilework-skill>`,
+        `\n<mobilework-profile name="${config.retrieval_profile}">\n${load(profileReference)}\n</mobilework-profile>`,
       )
     },
     "tool.execute.before": async (input, output) => {
