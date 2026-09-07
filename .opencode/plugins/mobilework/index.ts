@@ -51,6 +51,21 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
   }
 
   return {
+    "chat.params": async (input, output) => {
+      if (input.agent !== "mobilework" || syncSessions.has(input.sessionID)) return
+      const config = resolveConfig(readPreferences(root), requests.get(input.sessionID) ?? {})
+      // Retrieval budgets do not bound the provider's generation allocation.
+      // Keep short factual answers from requesting the model's maximum output.
+      const limit = ["fast", "balanced"].includes(config.retrieval_profile) ? 2048 : 4096
+      output.maxOutputTokens = Math.min(output.maxOutputTokens ?? limit, limit)
+      if (input.model?.providerID === "openrouter" && input.model?.id === "qwen/qwen3.8-flash") {
+        // This model defaults to reasoning and supports an explicit token budget.
+        output.options.reasoning = ["fast", "balanced"].includes(config.retrieval_profile)
+          ? { enabled: false }
+          : { enabled: true, max_tokens: 1024 }
+        output.options.provider = { ...output.options.provider, sort: "latency" }
+      }
+    },
     "chat.message": async (input, output) => {
       const text = promptText(output.parts)
       // Machine-readable per-turn overrides may be supplied by a client text part.
@@ -92,7 +107,11 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
           if (!guard) { guard = new RetrievalGuard(config); guards.set(input.sessionID, guard) }
           const stop = guard.before(`${kind}:${output.args?.query ?? JSON.stringify(output.args)}`)
           if (stop) throw new Error(`Retrieval stopped: ${stop}; answer using existing evidence and disclose gaps`)
-          if (kind === "retrieve") { output.args.profile = config.retrieval_profile; output.args.overrides = { retrieval: config.retrieval, budget: config.budget } }
+          if (kind === "retrieve") {
+            output.args.profile = config.retrieval_profile
+            output.args.channels = ["vector", "keyword", "graph"].filter(key => config.retrieval[key])
+            output.args.overrides = { retrieval: config.retrieval, budget: config.budget }
+          }
         }
       }
       if (retryAnswerSessions.has(input.sessionID) && retrievalToolKind(input.tool)) {

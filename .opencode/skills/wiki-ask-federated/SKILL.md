@@ -5,6 +5,8 @@ description: Answer from selected local knowledge bases using catalog routing an
 
 # Bounded federated retrieval
 
+For a factual lookup (such as an acronym and its three categories), one successful retrieval containing the requested facts is sufficient in ALL four profiles. Immediately give the final answer; higher profiles allow more work but never require extra calls. A budget limits retrieval, not the right to answer. Always use the current turn's profile and enabled channels, not values remembered from an earlier turn. Request top_k=5 for simple factual questions and include_content=true.
+
 For local evidence call `route_knowledge_bases` with the original query and user-selected `kb_ids` if any. Catalog routing does not consume a retrieval round. Then call unified `retrieve`, preserving the original selected KB boundary, with `profile` and nested `overrides.retrieval` / `overrides.budget` from the injected configuration. Backend routing handles parallel search and low-confidence/no-result fallback. Never expand outside explicitly selected KBs. One skill handles every KB.
 
 Only use enabled channels. Source verification requires `raw_evidence_fallback`; graph traversal requires `graph`, cross-KB expansion additionally requires `cross_kb_entity_expand`. Decomposition, sufficiency checks and supplementary searches each require their own switch. Delegate rerank and freshness to backend. Writeback needs both its switch and explicit user authorization; if no authorized tool exists, offer a draft.

@@ -43,5 +43,20 @@ test('plugin injects current config and enforces unified calls without widening 
   const output = {args:{query:'query',kb_ids:['kb_a']}}
   await hooks['tool.execute.before']({sessionID:'test',tool:'wiki_retrieve'}, output)
   assert.deepEqual(output.args.kb_ids, ['kb_a']); assert.equal(output.args.profile, 'research'); assert.equal(output.args.overrides.retrieval.graph,false)
+  assert.deepEqual(output.args.channels, ['vector', 'keyword'])
   await assert.rejects(() => hooks['tool.execute.before']({sessionID:'test',tool:'wiki_retrieve'}, {args:{query:'Query?'}}), /duplicate_query/)
+})
+
+test('all profiles bound model generation independently of retrieval budget', async () => {
+  const hooks = await MobileworkPlugin({ directory: fileURLToPath(new URL('..', import.meta.url)) })
+  for (const profile of PROFILE_NAMES) {
+    await hooks['chat.message']({sessionID:profile, agent:'mobilework'}, {parts:[{type:'text',text:`<mobilework-retrieval>{"retrieval_profile":"${profile}"}</mobilework-retrieval>`}]})
+    const params = {maxOutputTokens: 65536, options: {}}
+    await hooks['chat.params']({sessionID:profile, agent:'mobilework',model:{providerID:'openrouter',id:'qwen/qwen3.8-flash'}}, params)
+    assert.equal(params.maxOutputTokens, ['fast','balanced'].includes(profile) ? 2048 : 4096)
+    assert.equal(params.options.reasoning.enabled, !['fast','balanced'].includes(profile))
+    const args = {args:{query:'PBC',channels:['vector']}}
+    await hooks['tool.execute.before']({sessionID:profile, tool:'wiki-retrieval_retrieve'}, args)
+    assert.deepEqual(args.args.channels, profile === 'fast' ? ['vector'] : profile === 'balanced' ? ['vector','keyword'] : ['vector','keyword','graph'])
+  }
 })

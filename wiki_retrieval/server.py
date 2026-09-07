@@ -108,6 +108,40 @@ def _dump(payload: dict) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
 
+def _retrieval_dump(payload: dict, max_bytes: int = 14000) -> str:
+    """Compact MCP evidence; full diagnostics remain in the Python API.
+
+    Remove lowest-ranked evidence before the client's 16 KB truncation can
+    cut JSON mid-sentence. Keep complete chunks and explicitly disclose omission.
+    """
+    result = {key: payload[key] for key in (
+        "query", "scope", "routing", "queried_kb_ids", "errors",
+        "partial_failure", "duplicate", "timings", "embedding", "channels") if key in payload}
+    result["kb_status"] = {
+        kb: {key: value for key, value in status.items()
+             if key in ("channels", "embedding", "duplicate")}
+        for kb, status in payload.get("kb_status", {}).items()
+    }
+    result["results"] = []
+    result["omitted_results"] = 0
+    encode = lambda: json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+    for hit in payload.get("results", []):
+        page = {key: hit[key] for key in (
+            "page_id", "path", "title", "scope", "kb_id", "kb_name",
+            "rank_in_kb", "global_score", "matched_claims", "verification_status",
+            "freshness_factor") if key in hit}
+        page["matched_chunks"] = [
+            {key: value for key, value in chunk.items()
+             if key in ("chunk_id", "heading_path", "text", "claim_ids")}
+            for chunk in hit.get("matched_chunks", [])
+        ]
+        result["results"].append(page)
+        if len(encode().encode("utf-8")) > max_bytes:
+            result["results"].pop()
+            result["omitted_results"] += 1
+    return encode()
+
+
 def _surface_errors(function):
     """The SDK forwards ToolError text to the model but hides other exceptions as
     a server crash, so anything the caller could fix must be raised as ToolError."""
@@ -157,7 +191,7 @@ def build_server(root: Path):
         profile: str | None = None,
         overrides: dict | None = None,
     ) -> str:
-        return _dump(
+        return _retrieval_dump(
             _retrieve(
                 query,
                 scope=scope,
