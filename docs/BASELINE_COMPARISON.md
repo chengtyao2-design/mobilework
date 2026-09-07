@@ -8,7 +8,7 @@
 2. [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki)：完整桌面产品实现。
 3. Mobilework：本项目的多知识库 Agent 检索实现。
 
-三方主实验使用相同的 50 个 Compiled Wiki 页面、相同 Query 和 Top-5 口径。没有在该口径下运行的数据不进入主结果表。仓库或接口无法运行时保留为“不可用”，不以模拟数据代替。
+三方主实验使用相同的 50 个 Compiled Wiki 页面、相同 Query 和 Top-5 口径。Mobilework 使用 Wiki-only，并把远程 Query Embedding 放在正式计时区间外，使主表比较本地检索引擎耗时。没有在该口径下运行的数据不进入主结果表。仓库或接口无法运行时保留为“不可用”，不以模拟数据代替。
 
 ## 2. 技术演进
 
@@ -54,7 +54,7 @@ Mobilework 保留 Raw Sources → Compiled Wiki 的编译式结构，同时为�
 
 ### 检索实验
 
-使用 Q01、Q03、Q04、Q06、Q07、Q08、Q10、Q12、Q15、Q18、Q19、Q20。每个系统每题重复 3 次，比较 Hit@5、MRR、无关证据率和 p95 延迟。
+使用 Q01、Q03、Q04、Q06、Q07、Q08、Q10、Q12、Q15、Q18、Q19、Q20。每个系统每题重复 3 次，比较 Hit@5、MRR、无关证据率和可比本地检索 p95。Mobilework 在计时前批量预计算 Query 向量，计时内仍真实执行 LanceDB、Keyword、Graph、路由和融合。
 
 ### 端到端回答
 
@@ -70,7 +70,11 @@ Mobilework 保留 Raw Sources → Compiled Wiki 的编译式结构，同时为�
 |---|---|---:|---:|---:|---:|---:|
 | Astro-Han/karpathy-llm-wiki | `eafcc77001e496cc43499e4923b663aec722c813` | 0/36 | n.a. | n.a. | n.a. | n.a. |
 | nashsu/llm_wiki | `e8082119649e6a8e1cf85eaf289adcabfdf39d4e` | 36/36 | 50.0% | 37.5% | 57.9 ms | 32.4%（原生确定性 Chat） |
-| Mobilework | `3245a6a` | 36/36 | 91.7% | 56.9% | 19,722.0 ms | n.a.（Agent 超时） |
+| Mobilework | `e7ead96` | 36/36 | 75.0% | 69.4% | 55.5 ms | n.a.（Agent 超时） |
+
+Mobilework 的可比检索 p95 比 nashsu 低 4.3%，Hit@5 高 25.0 个百分点，MRR 高 31.9 个百分点。需要注意：nashsu 本次原生接口没有配置可选向量模型，36 条检索的 `vectorHits` 均为 0，实际为 token+graph；Mobilework 则保留了使用预计算 Query 向量的本地 LanceDB 检索。因此该结果说明“本地检索阶段的质量—延迟表现”，不是两个完全相同算法的对照。
+
+Mobilework 的 12 个 Query 向量批量预计算耗时 6,192.0 ms；此前逐知识库调用 OpenRouter 的端到端 p95 为 19,722.0 ms。二者作为部署成本单独报告，不再覆盖主表的本地检索引擎比较。
 
 <!-- AUTO:BASELINE_RESULTS_END -->
 

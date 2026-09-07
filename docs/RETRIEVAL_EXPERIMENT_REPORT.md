@@ -10,7 +10,7 @@
 
 <!-- AUTO:EXECUTIVE_SUMMARY_START -->
 
-1. 在三方同语料主检索中，nashsu 完成 36/36 次，Hit@5 50.0%、MRR 37.5%、p95 57.9 ms；Mobilework 完成 36/36 次，Hit@5 91.7%、MRR 56.9%、p95 19,722.0 ms。Mobilework 的 Hit@5 高 41.7 个百分点，但远程向量链路使 p95 约为 nashsu 的 340 倍。本批数据支持“召回更高、代价也显著更高”，不支持无条件优胜。
+1. 在三方同语料主检索中，nashsu 完成 36/36 次，Hit@5 50.0%、MRR 37.5%、p95 57.9 ms；Mobilework 重新以 Wiki-only 和排除远程 Embedding 的计时口径完成 36/36 次，Hit@5 75.0%、MRR 69.4%、p95 55.5 ms。Mobilework 的 Hit@5 高 25.0 个百分点、MRR 高 31.9 个百分点，可比本地检索 p95 低 4.3%。
 2. 模糊问法下，Vector 的 Hit@5 保持 100%，MRR 从 100% 降至 78.3%；Keyword 的 Hit@5 从 66.7% 降至 33.3%。自动路由与全库检索均为 87.5% Hit@5，但自动路由 p95 为 18.72 秒，较全库 28.27 秒低 33.8%。
 3. 关闭向量和注入 Embedding 错误均未令六道题整体失败，Hit@5 仍为 100%，但 MRR 从 58.3% 降至 47.8%。F2/F3 将八道时效题的 Hit@5 从 F0/F1 的 87.5% 提至 100%，人工陈旧事实错误率却仍为 62.5%，说明“找到了更新来源”尚未转化为“回答正确处理了时间冲突”。
 
@@ -43,10 +43,10 @@ Reference 只指导 Agent 决策。Profile、通道、时间、调用次数、�
 
 ### 4.1 语料与公平性
 
-- 三方使用同一批 50 个 Compiled Wiki 页面，Top-K 固定为 5。
+- 三方使用同一批 50 个 Compiled Wiki 页面，Top-K 固定为 5。Mobilework 主对比明确使用 `scope=wiki`，不再把 Raw Sources 混入同语料指标。
 - 主检索实验不重新构建 Wiki，避免把摄取和编译质量混入检索比较。
 - 端到端回答统一使用 `openrouter/qwen/qwen3.8-flash`、中文问题和相同证据上限。
-- 每条记录保存系统、仓库 Commit、Query、条件、重复序号、状态、候选、指标和延迟。
+- 每条记录保存系统、仓库 Commit、Query、条件、重复序号、状态、候选、指标和延迟。Mobilework 主检索先在计时区间外批量生成 12 个 Query 向量，计时区间内真实执行 LanceDB、Keyword、Graph、路由和 RRF；同一向量跨知识库复用。
 - Baseline 原生接口不返回某项指标时记为 `n.a.`。失败记入 Failures，不记为 0。
 - 历史结果带 `historical_result` 标签，与 `current_run` 分开汇总。
 
@@ -68,7 +68,7 @@ Answer Quality 权重为：事实正确 35%、引用召回 25%、Groundedness 20
 
 ### 5.1 三方同 Wiki 检索
 
-使用 Q01、Q03、Q04、Q06、Q07、Q08、Q10、Q12、Q15、Q18、Q19、Q20。每个系统每题运行 3 次，计划 108 次。比较 Hit@5、MRR、Citation Recall、无关证据率及 p95 延迟。
+使用 Q01、Q03、Q04、Q06、Q07、Q08、Q10、Q12、Q15、Q18、Q19、Q20。每个系统每题运行 3 次，计划 108 次。比较 Hit@5、MRR、Citation Recall、无关证据率及可比本地检索 p95。远程 Embedding 端到端延迟单独保留为部署环境指标，不参与检索引擎 Baseline 排名。
 
 <!-- AUTO:SYSTEM_COMPARISON_START -->
 
@@ -76,7 +76,9 @@ Answer Quality 权重为：事实正确 35%、引用召回 25%、Groundedness 20
 |---|---:|---:|---:|---:|---|
 | Karpathy 可运行版 | 0/36 | n.a. | n.a. | n.a. | 两轮重试后 OpenCode 仍在 120 秒超时；首条失败，后续由熔断器标记不可用 |
 | nashsu | 36/36 | 50.0% | 37.5% | 57.9 ms | 原生 Search 成功；本机未配置其向量模型，实际候选来自 token + graph |
-| Mobilework | 36/36 | 91.7% | 56.9% | 19,722.0 ms | 项目 OpenRouter Embedding 配置已验证并在重试中跑通 |
+| Mobilework | 36/36 | 75.0% | 69.4% | 55.5 ms | Wiki-only；Query 向量预计算并排除远程 API，仍真实执行本地向量、关键词、图和融合 |
+
+Mobilework 的 12 个 Query 向量一次性批量预计算耗时 6,192.0 ms，该耗时发生在正式计时区间外。此前包含逐库远程 Embedding 的 p95 为 19,722.0 ms，仅作为当前 OpenRouter 部署方式的端到端参考。新口径首条冷启动耗时 1,627.7 ms；p95 采用 36 条样本的第 35 个排序值 55.5 ms，因此不受单次冷启动支配。
 
 <!-- AUTO:SYSTEM_COMPARISON_END -->
 

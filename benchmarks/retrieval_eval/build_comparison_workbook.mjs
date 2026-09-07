@@ -190,7 +190,7 @@ const directAverage = (column, predicate) => {
 const systemRows = systems.map((system) => [system.id, system.name ?? system.id, system.commit, system.status ?? "not_run", null, null, null, null, null, null, null].map(asText));
 const systemSheet = addDataSheet(
   "System Comparison", "三方同语料对比",
-  ["system_id","system_name","commit","system_status","retrieval_runs","hit_at_5","mrr","retrieval_p95_ms","answer_runs","answer_quality","citation_recall"],
+  ["system_id","system_name","commit","system_status","retrieval_runs","hit_at_5","mrr","comparable_retrieval_p95_ms","answer_runs","answer_quality","citation_recall"],
   systemRows, [14,30,20,16,15,14,12,18,14,16,16],
 );
 systems.forEach((system, index) => {
@@ -327,7 +327,7 @@ summarySheet.getRange("A5:B9").values = [
 ];
 summarySheet.getRange("A5:A9").format = { fill: COLORS.paleBlue, font: { name: FONT, bold: true, color: COLORS.text } };
 summarySheet.getRange("B5:B9").format.font = { name: FONT, size: 11, color: COLORS.text };
-summarySheet.getRange("A12:F12").values = [["系统","Hit@5","MRR","检索 p95 (ms)","回答质量","Citation Recall"]];
+summarySheet.getRange("A12:F12").values = [["系统","Hit@5","MRR","可比检索 p95 (ms)","回答质量","Citation Recall"]];
 styleHeader(summarySheet.getRange("A12:F12"));
 systems.forEach((system, index) => {
   const row = index + 13;
@@ -348,7 +348,7 @@ styleHeader(summarySheet.getRange("A20:E20"));
 });
 summarySheet.getRange("B21:C24").format.numberFormat = "0.0%";
 summarySheet.getRange("D21:E24").format.numberFormat = "0.0";
-summarySheet.getRange("H12:I12").values = [["检索 p95 (ms)", "回答质量"]];
+summarySheet.getRange("H12:I12").values = [["可比检索 p95 (ms)", "回答质量"]];
 styleHeader(summarySheet.getRange("H12:I12"));
 systems.forEach((_, index) => {
   const row = index + 13;
@@ -358,7 +358,7 @@ systems.forEach((_, index) => {
 summarySheet.getRange("H13:H20").format.numberFormat = "0.0";
 summarySheet.getRange("I13:I20").format.numberFormat = "0.0%";
 const scatter = summarySheet.charts.add("scatter", summarySheet.getRange(`H12:I${systems.length + 12}`));
-scatter.title = "回答质量与检索延迟";
+scatter.title = "回答质量与可比检索延迟";
 scatter.titleTextStyle.typeface = FONT;
 scatter.hasLegend = false;
 scatter.xAxis = { numberFormatCode: "0", numberFormatSourceLinked: false, textStyle: { typeface: FONT } };
@@ -380,10 +380,10 @@ summarySheet.getRange("A29:G29").formulas = [[
   '=IF(SUM(\'Skill Regression\'!G5:G9)=0,"n.a.","已检查")',
 ]];
 summarySheet.getRange("A29:G29").format = { fill: COLORS.paleGreen, font: { name: FONT, bold: true, color: COLORS.text }, horizontalAlignment: "center" };
-summarySheet.getRange("A32:B32").values = [["说明", "无真实结果时显示 n.a.；失败不计为 0；历史与当前运行分开标记。"]];
+summarySheet.getRange("A32:B32").values = [["说明", "Mobilework 的 Query 向量在计时前生成；p95 仅含 Wiki 本地检索。远程端到端 p95 19,722 ms 仅作环境参考。"]];
 summarySheet.getRange("A32").format.font = { name: FONT, bold: true, color: COLORS.text };
 summarySheet.getRange("B32").format = { font: { name: FONT, italic: true, color: COLORS.muted }, wrapText: true, verticalAlignment: "top" };
-summarySheet.getRange("32:32").format.rowHeight = 36;
+summarySheet.getRange("32:32").format.rowHeight = 60;
 [24,32,16,18,18,18,18,16,16,3,16,16,16,16,16,16,16].forEach((width, index) => summarySheet.getRange(`${columnName(index)}:${columnName(index)}`).format.columnWidth = width);
 
 for (const name of ["System Comparison", "Pain Point Tests", "Skill Regression"]) workbook.worksheets.getItem(name).tabColor = name === "System Comparison" ? COLORS.blue : COLORS.teal;

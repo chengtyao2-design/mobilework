@@ -14,8 +14,8 @@
     },
     "mobilework": {
       "repository": "local",
-      "commit": "3245a6a",
-      "acquisition": "feat/report unified retrieval implementation commit"
+      "commit": "e7ead96",
+      "acquisition": "feat/report network-excluded retrieval timing commit"
     }
   }
 }
