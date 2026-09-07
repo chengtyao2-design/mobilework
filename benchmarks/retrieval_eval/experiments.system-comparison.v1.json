@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "corpus": {
+    "expected_wiki_pages": 50,
+    "top_k": 5,
+    "answer_model": "openrouter/qwen/qwen3.8-flash"
+  },
+  "systems": [
+    {"id": "karpathy", "name": "Astro-Han/karpathy-llm-wiki", "repository": "https://github.com/Astro-Han/karpathy-llm-wiki", "adapter": "karpathy_opencode"},
+    {"id": "nashsu", "name": "nashsu/llm_wiki", "repository": "https://github.com/nashsu/llm_wiki", "adapter": "nashsu_http"},
+    {"id": "mobilework", "name": "Mobilework", "repository": "local", "adapter": "mobilework"}
+  ],
+  "experiments": {
+    "system_retrieval": {
+      "systems": ["karpathy", "nashsu", "mobilework"],
+      "question_ids": ["Q01", "Q03", "Q04", "Q06", "Q07", "Q08", "Q10", "Q12", "Q15", "Q18", "Q19", "Q20"],
+      "repeats": 3,
+      "conditions": [{"id": "native_top5", "mode": "retrieval"}]
+    },
+    "system_answer": {
+      "systems": ["karpathy", "nashsu", "mobilework"],
+      "question_ids": ["Q01", "Q08", "Q15", "Q18", "Q19", "Q20"],
+      "repeats": 2,
+      "conditions": [{"id": "native_answer_top5", "mode": "answer"}]
+    },
+    "fuzzy_query": {
+      "systems": ["mobilework"],
+      "question_ids": ["Q01", "Q03", "Q06", "Q07", "Q08", "Q19"],
+      "repeats": 3,
+      "conditions": [
+        {"id": "keyword", "mode": "retrieval", "channels": ["keyword"]},
+        {"id": "vector", "mode": "retrieval", "channels": ["vector"]},
+        {"id": "vector_keyword", "mode": "retrieval", "channels": ["vector", "keyword"]},
+        {"id": "three_channel", "mode": "retrieval", "channels": ["vector", "keyword", "graph"]}
+      ],
+      "query_variants": ["standard", "fuzzy"]
+    },
+    "routing": {
+      "systems": ["mobilework"],
+      "question_ids": ["Q09", "Q12", "Q13", "Q15", "Q16", "Q17", "Q18", "Q19"],
+      "repeats": 3,
+      "conditions": [
+        {"id": "auto_route", "mode": "retrieval", "routing": "auto"},
+        {"id": "all_kbs", "mode": "retrieval", "routing": "all"},
+        {"id": "gold_kbs", "mode": "retrieval", "routing": "gold"}
+      ]
+    },
+    "failure_degradation": {
+      "systems": ["mobilework"],
+      "question_ids": ["Q01", "Q03", "Q06", "Q08", "Q15", "Q20"],
+      "repeats": 1,
+      "conditions": [
+        {"id": "vector_normal", "mode": "retrieval", "channels": ["vector", "keyword", "graph"]},
+        {"id": "vector_disabled", "mode": "retrieval", "channels": ["keyword", "graph"]},
+        {"id": "embedding_error", "mode": "retrieval", "channels": ["vector", "keyword", "graph"], "fault": "embedding_error"}
+      ]
+    },
+    "skill_regression": {
+      "systems": ["mobilework"],
+      "question_ids": ["Q01", "Q06", "Q08", "Q19", "Q20"],
+      "repeats": 1,
+      "conditions": [
+        {"id": "fast_q01", "mode": "answer", "profile": "fast", "only_question": "Q01"},
+        {"id": "balanced_q06", "mode": "answer", "profile": "balanced", "only_question": "Q06"},
+        {"id": "reasoning_q08", "mode": "answer", "profile": "reasoning", "only_question": "Q08"},
+        {"id": "research_q19", "mode": "answer", "profile": "research", "only_question": "Q19"},
+        {"id": "research_q20", "mode": "answer", "profile": "research", "only_question": "Q20"}
+      ]
+    }
+  },
+  "fuzzy_queries": {
+    "Q01": "PBC 到底分哪几种目标？",
+    "Q03": "那些老树是按多少岁分档的？",
+    "Q06": "员工能不能自己挑福利套餐，这算什么？",
+    "Q07": "公司的目标是怎么一层层分到个人的？",
+    "Q08": "公司车从申请到撞了以后该找谁、钱怎么处理？",
+    "Q19": "以前说的增值税留抵，跟现在结转或退税的规矩有什么不同？"
+  },
+  "historical_runs": [
+    {"id": "multikb-vector-20260904", "use": "channel_and_freshness", "provenance_label": "historical_result"},
+    {"id": "multikb-local-20260904", "use": "no_vector_degradation_and_local_latency", "provenance_label": "historical_result"},
+    {"id": "terminal-profiles", "use": "pre_refactor_skill_snapshot", "provenance_label": "historical_result"}
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-07",
+  "systems": {
+    "karpathy": {
+      "repository": "https://github.com/Astro-Han/karpathy-llm-wiki",
+      "commit": "eafcc77001e496cc43499e4923b663aec722c813",
+      "acquisition": "official GitHub source archive"
+    },
+    "nashsu": {
+      "repository": "https://github.com/nashsu/llm_wiki",
+      "commit": "e8082119649e6a8e1cf85eaf289adcabfdf39d4e",
+      "acquisition": "git clone"
+    },
+    "mobilework": {
+      "repository": "local",
+      "commit": "3245a6a",
+      "acquisition": "feat/report unified retrieval implementation commit"
+    }
+  }
+}
