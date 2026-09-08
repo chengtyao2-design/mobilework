@@ -55,10 +55,18 @@ def _merge(target: dict, incoming: dict) -> None:
             target[key] = value
 
 
-def rrf(runs: list[Run], rrf_k: float = DEFAULT_RRF_K, top_k: int | None = None) -> dict:
+def rrf(
+    runs: list[Run],
+    rrf_k: float = DEFAULT_RRF_K,
+    top_k: int | None = None,
+    weights: dict[str, float] | None = None,
+) -> dict:
     if not MIN_RRF_K <= float(rrf_k) <= MAX_RRF_K:
         raise ValueError(f"rrf_k must be between {MIN_RRF_K:.0f} and {MAX_RRF_K:.0f}")
     rrf_k = float(rrf_k)
+    channel_weights = weights or {}
+    if any(float(weight) < 0 for weight in channel_weights.values()):
+        raise ValueError("RRF weights must be non-negative")
 
     merged: dict[str, dict] = {}
     for run in runs:
@@ -76,7 +84,7 @@ def rrf(runs: list[Run], rrf_k: float = DEFAULT_RRF_K, top_k: int | None = None)
                 merged[path] = entry
             else:
                 _merge(entry, run.entries[path])
-            contribution = 1.0 / (rrf_k + rank)
+            contribution = float(channel_weights.get(run.name, 1.0)) / (rrf_k + rank)
             entry["ranks"][run.name] = rank
             entry["raw_scores"][run.name] = run.scores.get(path, 0.0)
             entry["contributions"][run.name] = contribution

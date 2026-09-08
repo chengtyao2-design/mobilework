@@ -10,6 +10,7 @@ import re
 import time
 
 from . import embedding
+from .textutil import expand_conversational_query
 
 
 def registry(root: Path) -> dict[str, dict]:
@@ -50,17 +51,27 @@ def route_knowledge_bases(root: Path, query: str, kb_ids: list[str] | None = Non
     candidates = list(entries) if kb_ids is None else list(dict.fromkeys(kb_ids))
     if not candidates or set(candidates) - entries.keys():
         raise ValueError("kb_ids must contain enabled knowledge base IDs")
-    terms = _tokens(query)
+    routing_query, expansion_terms = expand_conversational_query(query)
+    terms = _tokens(routing_query)
+    canonical_terms = _tokens(" ".join(expansion_terms))
     scored = []
     for identifier in candidates:
         path = entries[identifier]["root"] / "wiki/index.md"
         catalog = path.read_text(encoding="utf-8") if path.is_file() else ""
-        score = len(terms & _tokens(catalog)) / max(1, len(terms))
+        catalog_terms = _tokens(catalog)
+        lexical_score = len(terms & catalog_terms) / max(1, len(terms))
+        canonical_score = (
+            len(canonical_terms & catalog_terms) / len(canonical_terms)
+            if canonical_terms else 0.0
+        )
+        score = max(lexical_score, canonical_score)
         scored.append({"kb_id": identifier, "score": score})
     scored.sort(key=lambda item: (-item["score"], item["kb_id"]))
     confident = scored[0]["score"] >= .5
     selected = [item["kb_id"] for item in scored if item["score"] >= .5][:max(1, top_k)] if confident else candidates
-    return {"selected_kb_ids": selected, "candidate_kb_ids": candidates, "scores": scored, "fallback": not confident}
+    return {"selected_kb_ids": selected, "candidate_kb_ids": candidates, "scores": scored,
+            "fallback": not confident, "query_expansion": {"applied": bool(expansion_terms),
+            "terms": expansion_terms}}
 
 
 def retrieve(root: Path, query: str, kb_ids: list[str] | None = None,

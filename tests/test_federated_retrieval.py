@@ -31,6 +31,17 @@ def test_route_and_no_match_fallback(project):
     assert federated.route_knowledge_bases(project, "unknown")["selected_kb_ids"] == ["a", "b"]
 
 
+def test_conversational_query_expansion_is_visible_and_improves_routing(project):
+    root = project / "kb" / "a"
+    (root / "wiki/index.md").write_text("古树 名木 树龄 保护等级", encoding="utf-8")
+    routed = federated.route_knowledge_bases(project, "那些老树是按多少岁分档的？")
+    assert routed["selected_kb_ids"] == ["a"]
+    assert routed["query_expansion"] == {
+        "applied": True,
+        "terms": ["古树", "名木", "树龄", "分级", "保护等级"],
+    }
+
+
 def test_namespace_collision_and_hard_boundary(project):
     result = retrieve("common", root=project, channels=["keyword"], include_content=True)
     assert {r["page_id"] for r in result["results"]} == {"a::shared", "b::shared"}

@@ -297,6 +297,13 @@ class TestFusion:
         with pytest.raises(ValueError):
             rrf([Run(name="keyword")], rrf_k=10_001)
 
+    def test_weighted_rrf_preserves_a_strong_semantic_hit(self):
+        vector_run = Run(name="vector", ordered=["gold"], entries={"gold": {"path": "gold"}})
+        keyword_run = Run(name="keyword", ordered=["noise", "gold"], entries={
+            "noise": {"path": "noise"}, "gold": {"path": "gold"}})
+        ranking = rrf([vector_run, keyword_run], weights={"vector": 1.0, "keyword": 0.35})["ranking"]
+        assert [row["path"] for row in ranking] == ["gold", "noise"]
+
 
 class TestGraphChannel:
     def test_graph_run_scores_matched_above_neighbours(self, corpus):
