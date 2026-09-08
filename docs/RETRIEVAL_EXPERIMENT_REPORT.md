@@ -1,6 +1,6 @@
 # 多知识库检索实验与汇报方案
 
-> 状态：2026-09-07 实验已收口。本文与最终 Excel 均基于失败项统一重试后的 1,124 条记录：当前分支 383 条、历史导入 741 条。当前运行中 318 条成功、2 条失败、63 条不可用；失败不补零，也不用模拟值替代。
+> 状态：2026-09-08 实验已收口。本文与最终 Excel 基于 1,658 条真实尝试：1,244 条当前有效记录、414 条已被成功或更新尝试替代的审计记录；当前有效记录中含 46 条失败，其中 8 条为明确隔离的历史 Skill 快照。失败不补零，也不用模拟值替代。
 
 ## 1. 汇报结论
 
@@ -10,9 +10,9 @@
 
 <!-- AUTO:EXECUTIVE_SUMMARY_START -->
 
-1. 在三方同语料主检索中，nashsu 完成 36/36 次，Hit@5 50.0%、MRR 37.5%、p95 57.9 ms；Mobilework 重新以 Wiki-only 和排除远程 Embedding 的计时口径完成 36/36 次，Hit@5 75.0%、MRR 69.4%、p95 55.5 ms。Mobilework 的 Hit@5 高 25.0 个百分点、MRR 高 31.9 个百分点，可比本地检索 p95 低 4.3%。
+1. 在同一 OpenRouter `qwen/qwen3-embedding-8b`、同一 50 页 Wiki、同一 Query 和 Top-5 下，nashsu 与 Mobilework 的主检索均完成 36/36 次，Hit@5 均为 75.0%；Mobilework MRR 为 59.7%，比 nashsu 的 49.3% 高 10.4 个百分点，本地检索 p95 为 44.9 ms，比 nashsu 的 71.5 ms 低 37.2%。Karpathy 成功 13/36 次，成功子集 Hit@5 为 76.9%，但成功覆盖不足，不能直接据此排名。
 2. 模糊问法下，Vector 的 Hit@5 保持 100%，MRR 从 100% 降至 78.3%；Keyword 的 Hit@5 从 66.7% 降至 33.3%。自动路由与全库检索均为 87.5% Hit@5，但自动路由 p95 为 18.72 秒，较全库 28.27 秒低 33.8%。
-3. 关闭向量和注入 Embedding 错误均未令六道题整体失败，Hit@5 仍为 100%，但 MRR 从 58.3% 降至 47.8%。F2/F3 将八道时效题的 Hit@5 从 F0/F1 的 87.5% 提至 100%，人工陈旧事实错误率却仍为 62.5%，说明“找到了更新来源”尚未转化为“回答正确处理了时间冲突”。
+3. 关闭向量和注入 Embedding 错误均未令六道题整体失败，Hit@5 仍为 100%，但 MRR 从 58.3% 降至 47.8%。端到端检索 p95 为 Mobilework 20.16 秒、nashsu 13.66 秒，而排除网络后的本地 p95 都低于 72 ms，说明当前部署时延主要来自远程 Embedding 与网络波动；两种口径严格分栏，不再事后估算相减。
 
 <!-- AUTO:EXECUTIVE_SUMMARY_END -->
 
@@ -46,7 +46,7 @@ Reference 只指导 Agent 决策。Profile、通道、时间、调用次数、�
 - 三方使用同一批 50 个 Compiled Wiki 页面，Top-K 固定为 5。Mobilework 主对比明确使用 `scope=wiki`，不再把 Raw Sources 混入同语料指标。
 - 主检索实验不重新构建 Wiki，避免把摄取和编译质量混入检索比较。
 - 端到端回答统一使用 `openrouter/qwen/qwen3.8-flash`、中文问题和相同证据上限。
-- 每条记录保存系统、仓库 Commit、Query、条件、重复序号、状态、候选、指标和延迟。Mobilework 主检索先在计时区间外批量生成 12 个 Query 向量，计时区间内真实执行 LanceDB、Keyword、Graph、路由和 RRF；同一向量跨知识库复用。
+- 每条记录保存系统、仓库 Commit、Query、条件、重复序号、状态、候选、指标和延迟。nashsu 与 Mobilework 主检索均使用同一 OpenRouter 客户端预计算的 4096 维 Query 向量；nashsu 通过 `queryEmbedding`，Mobilework 通过检索后端注入同一向量。计时区间只包含各自本地检索、融合和排序。另设 `end_to_end` 组，让两套系统分别在线请求同一模型并把网络耗时计入总时延。
 - Baseline 原生接口不返回某项指标时记为 `n.a.`。失败记入 Failures，不记为 0。
 - 历史结果带 `historical_result` 标签，与 `current_run` 分开汇总。
 
@@ -74,11 +74,11 @@ Answer Quality 权重为：事实正确 35%、引用召回 25%、Groundedness 20
 
 | 系统 | 成功次数 | Hit@5 | MRR | p95 延迟 | 备注 |
 |---|---:|---:|---:|---:|---|
-| Karpathy 可运行版 | 0/36 | n.a. | n.a. | n.a. | 两轮重试后 OpenCode 仍在 120 秒超时；首条失败，后续由熔断器标记不可用 |
-| nashsu | 36/36 | 50.0% | 37.5% | 57.9 ms | 原生 Search 成功；本机未配置其向量模型，实际候选来自 token + graph |
-| Mobilework | 36/36 | 75.0% | 69.4% | 55.5 ms | Wiki-only；Query 向量预计算并排除远程 API，仍真实执行本地向量、关键词、图和融合 |
+| Karpathy 可运行版 | 13/36 | 76.9% | 71.2% | 63,331.7 ms | 指标只计算成功子集；23 条在两次独立尝试后仍失败，成功覆盖不足，不能与完整样本直接排名 |
+| nashsu | 36/36 | 75.0% | 49.3% | 71.5 ms | 相同 OpenRouter Query 向量；`vectorHits > 0` 为成功必要条件 |
+| Mobilework | 36/36 | 75.0% | 59.7% | 44.9 ms | Wiki-only；相同 Query 向量；真实执行 LanceDB、关键词、图、路由与融合 |
 
-Mobilework 的 12 个 Query 向量一次性批量预计算耗时 6,192.0 ms，该耗时发生在正式计时区间外。此前包含逐库远程 Embedding 的 p95 为 19,722.0 ms，仅作为当前 OpenRouter 部署方式的端到端参考。新口径首条冷启动耗时 1,627.7 ms；p95 采用 36 条样本的第 35 个排序值 55.5 ms，因此不受单次冷启动支配。
+`network_excluded` 是主检索表口径，避免把同一个远程服务的网络波动误算成检索算法差异。独立 `end_to_end` 组中，Mobilework p95 为 20,161.5 ms，nashsu 为 13,664.7 ms；对应 Embedding API p50/p95 分别约为 4,829.7/20,116.6 ms 与 2,199.8/13,599.1 ms。本批观测表明远程 Embedding 占大部分部署时延，但不能把两组独立请求逐条事后相减作为“真实本地时延”。
 
 <!-- AUTO:SYSTEM_COMPARISON_END -->
 
@@ -86,7 +86,7 @@ Mobilework 的 12 个 Query 向量一次性批量预计算耗时 6,192.0 ms，�
 
 使用 Q01、Q08、Q15、Q18、Q19、Q20。每个系统每题运行 2 次，计划 36 次。除检索指标外，评分 Required/Forbidden Facts、引用正确性、冲突解释、时间边界和知识缺口拒答。
 
-真实执行结果中，nashsu 12/12 次成功，确定性评分的 Answer Quality 为 32.4%、Citation Recall 为 33.3%、p95 为 65.2 ms。其 `/chat` 在本机返回基于检索结果的确定性摘要，不是统一的 Qwen 生成，因此只作为“原生接口输出”展示，不能与统一模型下的回答质量等价比较。Karpathy 和 Mobilework 的 OpenCode Agent 调用均在 120 秒重试窗口内超时，回答质量保留为 `n.a.`。
+真实执行结果中，nashsu 12/12 次成功，Karpathy 6/12、Mobilework 7/12。只对成功运行计算的 Answer Quality 分别为 35.5%、39.2% 和 28.5%，Citation Recall 分别为 45.8%、66.7% 和 42.9%。Karpathy 与 Mobilework 存在大量失败，且 nashsu `/chat` 是原生接口输出，因此这组数值必须和成功覆盖率一起展示，不能单凭成功子集质量判定系统胜负。
 
 ### 5.3 模糊 Query 专项
 
@@ -116,7 +116,7 @@ Q01、Q03、Q06、Q07、Q08、Q19 各增加一个口语化改写，在 Keyword�
 | 多库路由 | auto / all / gold | 三组 Hit@5 均为 87.5%、MRR 均为 45.8%；p95 分别 18.72/28.27/17.35 秒 | 自动路由保持本批召回并减少全库检索延迟；无关证据率均为 0，不能声称污染率下降 |
 | 故障降级 | normal / disabled / error | 三组 Hit@5 均为 100%；MRR 58.3%→47.8%/47.8%；p95 14.42 秒→31.4/32.8 ms | 向量故障未中断请求，但排序质量下降；本地降级延迟不可解释为总体更优 |
 | 新鲜度 | F0–F3 | F0/F1 Hit@5 87.5%，F2/F3 100%；陈旧事实错误率均为 62.5% | 新鲜度配置改善来源召回，但尚未改善确定性回答中的时间判断 |
-| Skill 回归 | 四档 Profile | 9 个 Node 静态/注入/兼容测试通过；5 个 Agent 运行项因 OpenCode 超时无成功样本 | 架构与守卫规则通过代码回归，运行时行为仍需在 Agent 可用环境补验 |
+| Skill 回归 | 四档 Profile | 13 个 Node 测试通过；5 个 Agent 运行项中 Fast-Q01 成功，其余 4 项两次尝试后仍失败 | Fast 的单次向量与调用上限已端到端验证；Balanced/Reasoning/Research 仍需在更稳定的 Agent 环境补验 |
 
 <!-- AUTO:PAIN_POINT_RESULTS_END -->
 
@@ -127,6 +127,8 @@ Q01、Q03、Q06、Q07、Q08、Q19 各增加一个口语化改写，在 Keyword�
 这批实验的回答是确定性摘句，不是完整 Agent 回答；重复次数也不增加独立问题数量。第一条 Vector 请求存在异常长等待。因此这些数字可说明小样本上的召回与延迟权衡，不能直接证明最终回答质量或统计显著优势。
 
 `multikb-local-20260904` 只用于无向量降级和本地延迟参考。旧 terminal profile 只作为改造前快照。两者均不得与当前分支结果混称为同一版本。
+
+旧 nashsu 无向量结果已改名为 `nashsu_token_graph` 消融组：36 条检索的 Hit@5 为 50.0%、MRR 为 37.5%、p95 为 57.9 ms。它不再出现在主 Baseline 行；新的主行来自相同 OpenRouter 向量且每条 `vectorHits > 0` 的 36 条检索。
 
 ## 7. 结果解读原则
 
@@ -152,4 +154,4 @@ Q01、Q03、Q06、Q07、Q08、Q19 各增加一个口语化改写，在 Keyword�
 
 最终工作簿固定包含八张表：`Summary`、`System Comparison`、`Pain Point Tests`、`Skill Regression`、`Raw Runs`、`Queries & Rubric`、`Sources & Setup`、`Failures`。汇总指标和图表由 `Raw Runs` 公式驱动。工作簿遇到缺失或失败数据时显示 `n.a.`，并在 Failures 保留原因。
 
-最终工作簿已完成公式重算、Summary 与原始记录抽查、公式错误扫描和八张工作表渲染检查。`Failures` 保留 73 条失败或不可用记录，其中当前运行 65 条、历史结果 8 条；这使成功率和证据边界可直接追溯。
+最终工作簿已由 Microsoft Excel 全量重算：218 个公式、0 个公式错误；Artifact Tool 对八张工作表完成重新导入、错误扫描和渲染检查。`Failures` 保留全部失败尝试及 `superseded_by` 关系；汇总只统计 1,244 条当前有效记录，其中 46 条为当前有效失败。

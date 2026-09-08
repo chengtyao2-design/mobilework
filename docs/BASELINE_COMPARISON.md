@@ -8,7 +8,7 @@
 2. [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki)：完整桌面产品实现。
 3. Mobilework：本项目的多知识库 Agent 检索实现。
 
-三方主实验使用相同的 50 个 Compiled Wiki 页面、相同 Query 和 Top-5 口径。Mobilework 使用 Wiki-only，并把远程 Query Embedding 放在正式计时区间外，使主表比较本地检索引擎耗时。没有在该口径下运行的数据不进入主结果表。仓库或接口无法运行时保留为“不可用”，不以模拟数据代替。
+三方主实验使用相同的 50 个 Compiled Wiki 页面、相同 Query 和 Top-5 口径。nashsu 与 Mobilework 使用同一 OpenRouter `qwen/qwen3-embedding-8b` 的 4096 维 Query 向量；Mobilework 使用 Wiki-only。主表采用 `network_excluded` 口径比较本地检索实现，另设 `end_to_end` 组记录真实远程 Embedding 成本。没有在该口径下运行的数据不进入主结果表；失败不以模拟数据代替。
 
 ## 2. 技术演进
 
@@ -46,7 +46,7 @@ Mobilework 保留 Raw Sources → Compiled Wiki 的编译式结构，同时为�
 | 增量维护 | 依赖 Skill 与目录约定 | Watcher、持久队列、恢复 | Manifest、Staging、校验与 Journal |
 | 故障降级 | 无统一通道状态 | 由应用实现处理 | 向量失败后保留 Keyword/Graph，并返回降级状态 |
 | 查询预算 | 无统一硬预算 | 产品内部控制 | Profile 调度，代码执行时间与调用上限 |
-| 同语料实测 | 两轮 OpenCode 重试仍超时 | Search / Chat 48/48 成功 | 检索与痛点实验成功，Agent 调用仍超时 |
+| 同语料实测 | 检索 13/36、回答 6/12 成功 | 向量检索 36/36、回答 12/12 成功 | 向量检索 36/36、回答 7/12 成功；Fast Skill 回归通过 |
 
 能力表描述可验证的实现差异，不是准确率评分。图谱成熟度、部署便利性或功能数量不能替代同语料检索结果。
 
@@ -54,7 +54,7 @@ Mobilework 保留 Raw Sources → Compiled Wiki 的编译式结构，同时为�
 
 ### 检索实验
 
-使用 Q01、Q03、Q04、Q06、Q07、Q08、Q10、Q12、Q15、Q18、Q19、Q20。每个系统每题重复 3 次，比较 Hit@5、MRR、无关证据率和可比本地检索 p95。Mobilework 在计时前批量预计算 Query 向量，计时内仍真实执行 LanceDB、Keyword、Graph、路由和融合。
+使用 Q01、Q03、Q04、Q06、Q07、Q08、Q10、Q12、Q15、Q18、Q19、Q20。每个系统每题重复 3 次，比较 Hit@5、MRR、无关证据率和可比本地检索 p95。nashsu 与 Mobilework 在计时前共享完全相同的 Query 向量；计时内分别执行各自原生索引、图/关键词融合与排序。两者保留原生切块和融合算法，因此结论限定为“同模型、同语料、不同检索实现”。
 
 ### 端到端回答
 
@@ -68,13 +68,13 @@ Mobilework 保留 Raw Sources → Compiled Wiki 的编译式结构，同时为�
 
 | 系统 | Commit | 成功检索数 | Hit@5 | MRR | 检索 p95 | 回答质量 |
 |---|---|---:|---:|---:|---:|---:|
-| Astro-Han/karpathy-llm-wiki | `eafcc77001e496cc43499e4923b663aec722c813` | 0/36 | n.a. | n.a. | n.a. | n.a. |
-| nashsu/llm_wiki | `e8082119649e6a8e1cf85eaf289adcabfdf39d4e` | 36/36 | 50.0% | 37.5% | 57.9 ms | 32.4%（原生确定性 Chat） |
-| Mobilework | `e7ead96` | 36/36 | 75.0% | 69.4% | 55.5 ms | n.a.（Agent 超时） |
+| Astro-Han/karpathy-llm-wiki | `eafcc77001e496cc43499e4923b663aec722c813` | 13/36 | 76.9%* | 71.2%* | 63,331.7 ms* | 39.2%*（6/12 成功子集） |
+| nashsu/llm_wiki | `e8082119649e6a8e1cf85eaf289adcabfdf39d4e` | 36/36 | 75.0% | 49.3% | 71.5 ms | 35.5%（12/12） |
+| Mobilework | `e7ead96` | 36/36 | 75.0% | 59.7% | 44.9 ms | 28.5%*（7/12 成功子集） |
 
-Mobilework 的可比检索 p95 比 nashsu 低 4.3%，Hit@5 高 25.0 个百分点，MRR 高 31.9 个百分点。需要注意：nashsu 本次原生接口没有配置可选向量模型，36 条检索的 `vectorHits` 均为 0，实际为 token+graph；Mobilework 则保留了使用预计算 Query 向量的本地 LanceDB 检索。因此该结果说明“本地检索阶段的质量—延迟表现”，不是两个完全相同算法的对照。
+带星号的指标只基于成功子集，必须与成功覆盖率一起阅读。nashsu 与 Mobilework 的 Hit@5 均为 75.0%；Mobilework MRR 高 10.4 个百分点，本地 p95 低 37.2%。Karpathy 的成功子集质量较高，但 23/36 条检索仍失败，因此不能用 13 条成功样本直接宣称优于完整样本系统。
 
-Mobilework 的 12 个 Query 向量批量预计算耗时 6,192.0 ms；此前逐知识库调用 OpenRouter 的端到端 p95 为 19,722.0 ms。二者作为部署成本单独报告，不再覆盖主表的本地检索引擎比较。
+端到端组的检索 p95 为 Mobilework 20,161.5 ms、nashsu 13,664.7 ms；Embedding API p50/p95 分别约为 4,829.7/20,116.6 ms 与 2,199.8/13,599.1 ms。相较于 44.9/71.5 ms 的本地检索 p95，远程 Embedding 是当前部署时延的主要组成，但主表没有采用事后相减的估算值。
 
 <!-- AUTO:BASELINE_RESULTS_END -->
 
@@ -101,8 +101,8 @@ Mobilework 的 12 个 Query 向量批量预计算耗时 6,192.0 ms；此前逐�
 - 多库路由：自动、全库和 Gold KB 的 Hit@5 均为 87.5%；自动路由 p95 为 18.72 秒，较全库的 28.27 秒低 33.8%。无关证据率均为 0，因此只验证了延迟收益，没有验证污染率下降。
 - 故障隔离：关闭向量和注入 Embedding 错误时，六道题均继续返回结果且 Hit@5 为 100%；MRR 从正常向量的 58.3% 降至 47.8%，验证了“可降级”，没有验证“质量不变”。
 - 时间证据：F2/F3 的 Hit@5 从 87.5% 提至 100%，但人工陈旧事实错误率仍为 62.5%，该主张尚未通过。
-- Agent 调度：Profile Reference 注入、旧配置兼容和预算守卫的 9 个 Node 测试通过；真实 Agent 回归因 OpenCode 120 秒超时没有成功样本，只能判定静态回归通过。
-- 知识缺口：Research-Q20 的真实 Agent 行为没有跑通，暂不能声称拒答已被端到端验证。
+- Agent 调度：Profile Reference 注入、旧配置兼容、预算守卫和工作簿公式共 13 个 Node 测试通过；真实 Agent 回归中 Fast-Q01 成功，其余 4 项仍失败。
+- 知识缺口：Research-Q20 两次尝试后仍失败，暂不能声称拒答已被端到端验证。
 
 OpenRouter Embedding 已在 Mobilework 检索重试中真实跑通。端到端 Qwen/OpenCode 超时是另一条链路的问题，不能把向量成功等同于 Agent 回归成功。
 
@@ -120,5 +120,5 @@ OpenRouter Embedding 已在 Mobilework 检索重试中真实跑通。端到端 Q
 - 20 题题库是项目级小样本。重复运行衡量稳定性，不增加独立题目数。
 - Hit@5 和 MRR 衡量检索，不等同于最终回答正确率。
 - 新鲜度来源召回提升不等同于陈旧事实错误下降，后者必须依赖人工标签。
-- nashsu 本机运行未配置其可选向量模型，原生 Search 的有效候选来自 token + graph；其 Chat 是确定性搜索摘要，不与统一 Qwen 生成结果等价。
-- Karpathy 与 Mobilework 的 OpenCode 项均统一重试到 120 秒；仍失败的记录保留为失败或不可用，没有补值。
+- nashsu 主实验已配置与 Mobilework 相同的 OpenRouter 向量模型，并要求每条检索 `vectorHits > 0`；旧 token+graph 的 36 条检索仅作为消融组保留（Hit@5 50.0%、MRR 37.5%、p95 57.9 ms），不参与主表胜负。
+- Karpathy 与 Mobilework 的失败项按 180 秒上限独立重试；仍失败的记录保留为失败或不可用，没有补值。
