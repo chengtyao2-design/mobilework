@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mobilework.local/schemas/multikb-eval-record.v1.schema.json",
+  "title": "Mobilework multi-KB evaluation JSONL record",
+  "oneOf": [
+    {"$ref": "#/$defs/retrieval_run"},
+    {"$ref": "#/$defs/answer_score"}
+  ],
+  "$defs": {
+    "common": {
+      "type": "object",
+      "required": ["schema_version", "record_type", "run_id", "question_id", "config_id", "repeat", "seed"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "record_type": {"enum": ["retrieval_run", "answer_score"]},
+        "run_id": {"type": "string", "minLength": 1},
+        "question_id": {"type": "string", "pattern": "^Q[0-9]{2}$"},
+        "config_id": {"type": "string", "pattern": "^(C[0-9]{2}|F[0-3])$"},
+        "repeat": {"type": "integer", "minimum": 1, "maximum": 3},
+        "seed": {"type": "integer"}
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["kb_id", "document_id", "chunk_id", "rank_in_kb", "global_score", "source", "claim_ids"],
+      "properties": {
+        "kb_id": {"type": "string"},
+        "document_id": {"type": "string"},
+        "chunk_id": {"type": "string"},
+        "rank_in_kb": {"type": "integer", "minimum": 1},
+        "global_score": {"type": "number"},
+        "source": {"type": "string"},
+        "claim_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      },
+      "additionalProperties": true
+    },
+    "retrieval_run": {
+      "allOf": [
+        {"$ref": "#/$defs/common"},
+        {
+          "type": "object",
+          "required": ["status", "started_at", "finished_at", "latency_ms", "tool_calls", "results", "failure_detail"],
+          "properties": {
+            "record_type": {"const": "retrieval_run"},
+            "status": {"enum": ["ok", "timeout", "retrieval_error", "answer_error"]},
+            "started_at": {"type": "string", "format": "date-time"},
+            "finished_at": {"type": "string", "format": "date-time"},
+            "latency_ms": {"type": "number", "minimum": 0},
+            "tool_calls": {"type": "integer", "minimum": 0},
+            "results": {"type": "array", "items": {"$ref": "#/$defs/result"}},
+            "failure_detail": {"type": "string"}
+          }
+        }
+      ]
+    },
+    "answer_score": {
+      "allOf": [
+        {"$ref": "#/$defs/common"},
+        {
+          "type": "object",
+          "required": ["factual_correctness", "citation_recall", "grounded_ratio", "conflict_handling", "abstention_score", "hit_at_5", "latency_ms", "tool_calls", "stale_fact_error", "notes"],
+          "properties": {
+            "record_type": {"const": "answer_score"},
+            "factual_correctness": {"type": "number", "minimum": 0, "maximum": 1},
+            "citation_recall": {"type": "number", "minimum": 0, "maximum": 1},
+            "grounded_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+            "conflict_handling": {"type": "number", "minimum": 0, "maximum": 1},
+            "abstention_score": {"type": "number", "minimum": 0, "maximum": 1},
+            "hit_at_5": {"type": "number", "minimum": 0, "maximum": 1},
+            "latency_ms": {"type": "number", "minimum": 0},
+            "tool_calls": {"type": "integer", "minimum": 0},
+            "stale_fact_error": {"type": "integer", "minimum": 0, "maximum": 1},
+            "notes": {"type": "string"}
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "default_kb": "kb_enterprise",
+  "knowledge_bases": {
+    "kb_enterprise": {
+      "name": "企业知识库",
+      "path": "kb/kb_enterprise",
+      "priority": 1.0,
+      "enabled": true
+    },
+    "kb_research": {
+      "name": "研究资料库",
+      "path": "kb/kb_research",
+      "priority": 1.0,
+      "enabled": true
+    }
+  }
+}

@@ -297,6 +297,13 @@ class TestFusion:
         with pytest.raises(ValueError):
             rrf([Run(name="keyword")], rrf_k=10_001)
 
+    def test_weighted_rrf_preserves_a_strong_semantic_hit(self):
+        vector_run = Run(name="vector", ordered=["gold"], entries={"gold": {"path": "gold"}})
+        keyword_run = Run(name="keyword", ordered=["noise", "gold"], entries={
+            "noise": {"path": "noise"}, "gold": {"path": "gold"}})
+        ranking = rrf([vector_run, keyword_run], weights={"vector": 1.0, "keyword": 0.35})["ranking"]
+        assert [row["path"] for row in ranking] == ["gold", "noise"]
+
 
 class TestGraphChannel:
     def test_graph_run_scores_matched_above_neighbours(self, corpus):
@@ -487,7 +494,7 @@ class TestIndexFreshness:
         embedded = [text for batch in captured["batches"] for text in batch]
         assert len(captured["rows"]) == len(embedded) == meta["rows"]
         assert meta["rows"] > meta["wiki_pages"]
-        assert meta["chunking_strategy"] == "markdown_chunk_v2"
+        assert meta["chunking_strategy"] == index.CHUNKING_STRATEGY
         assert captured["dim"] == 2
 
     def test_meta_then_edit_flips_stale_index(self, corpus_root: Path):
@@ -516,7 +523,7 @@ class TestKnowledgeTree:
         first = server.catalog(corpus_root)
         loader.reset_cache()
         assert server.catalog(corpus_root) == first
-        assert first["chunking_strategy"] == "markdown_chunk_v2"
+        assert first["chunking_strategy"] == index.CHUNKING_STRATEGY
         assert first["totals"]["wiki_pages"] == 4
         assert first["totals"]["source_files"] == 1
         assert [group["category"] for group in first["wiki"]] == ["concepts", "entities"]
@@ -562,7 +569,7 @@ class TestServerSurface:
     def test_three_tools_are_registered(self, corpus_root: Path):
         built = server.build_server(corpus_root)
         names = {tool.name for tool in built._tool_manager.list_tools()}
-        assert names == {"retrieve", "graph_neighbors", "knowledge_tree"}
+        assert names == {"retrieve", "graph_neighbors", "knowledge_tree", "list_knowledge_bases", "route_knowledge_bases"}
 
 
 class TestRealCorpus:

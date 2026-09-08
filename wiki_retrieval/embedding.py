@@ -31,7 +31,19 @@ _warned_legacy: set[str] = set()
 
 
 def load_dotenv(root: Path) -> None:
-    path = Path(root) / ".env"
+    root = Path(root).resolve()
+    # Isolated registered KBs share application credentials. Do not traverse
+    # arbitrary ancestors for unrelated standalone knowledge bases.
+    from wiki_maintainer.project import knowledge_base_entries
+    app_root = None
+    for parent in root.parents:
+        if (parent / "mobilework.config.json").is_file():
+            if any(entry["root"] == root for entry in knowledge_base_entries(parent).values()):
+                app_root = parent
+            break
+    if app_root is not None:
+        load_dotenv(app_root)
+    path = root / ".env"
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():

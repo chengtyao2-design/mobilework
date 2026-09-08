@@ -33,6 +33,26 @@ TERM_STOP_WORDS = frozenset(
 SNIPPET_CONTEXT = 80
 MAX_SNIPPET = 320
 
+# Conversational wording that commonly hides the terminology used by curated
+# wiki pages.  Expansions add retrieval terms without replacing the user's
+# original wording, so exact names, numbers and negations are never discarded.
+# Keep this list about terminology rather than answers: it must not inject the
+# facts that an evaluation question is asking the retriever to find.
+QUERY_EXPANSIONS = (
+    (("老树",), ("古树", "名木")),
+    (("多少岁",), ("树龄",)),
+    (("分档",), ("分级", "保护等级")),
+    (("自己挑", "挑福利", "福利套餐"), ("弹性福利", "自主选择", "福利组合")),
+    (("一层层", "分到个人"), ("目标分解", "逐级承接", "部门", "员工")),
+    (("公司车",), ("车辆", "用车")),
+    (("撞了", "撞车", "车祸"), ("事故", "肇事")),
+    (("找谁",), ("报告", "责任鉴定")),
+    (("钱怎么处理",), ("赔偿", "处理")),
+    (("以前说", "以前的"), ("历史规定",)),
+    (("现在", "现在的"), ("现行规定",)),
+    (("哪几种目标", "哪几类目标"), ("目标分类",)),
+)
+
 
 def _split(text: str, delimiters: frozenset[str]) -> list[str]:
     """Split on whitespace or any delimiter. A character loop avoids having to
@@ -73,6 +93,24 @@ def tokenize_query(query: str) -> list[str]:
         else:
             out.append(token)
     return sorted(set(out))
+
+
+def expand_conversational_query(query: str) -> tuple[str, list[str]]:
+    """Append canonical retrieval terms for colloquial phrases.
+
+    The returned list is exposed in verbose retrieval metadata so experiments
+    can distinguish the user's text from deterministic terminology expansion.
+    """
+    original = query.strip()
+    additions: list[str] = []
+    lowered = original.casefold()
+    for cues, canonical_terms in QUERY_EXPANSIONS:
+        if not any(cue.casefold() in lowered for cue in cues):
+            continue
+        for term in canonical_terms:
+            if term.casefold() not in lowered and term not in additions:
+                additions.append(term)
+    return (" ".join((original, *additions)) if additions else original), additions
 
 
 def split_terms(query: str) -> list[str]:

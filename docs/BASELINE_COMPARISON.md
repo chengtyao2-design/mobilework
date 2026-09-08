@@ -1,127 +1,124 @@
-# mobilework 与 nashsu / green-dalii Baseline 对比报告
+# LLM Wiki 检索 Baseline 对比
 
-> 说明：本工程（mobilework）从参考实现 new-wiki 重构而来。本文的**本机性能数字（第 3 节）沿用参考实现 new-wiki 的历史实测**，尚未在 mobilework 上重跑；架构与算法描述（第 1、2、6 节的检索侧）已按 mobilework 当前实现更新。凡属参考实现的数字均显式标注，未在本工程上复现的不谎报为本工程跑分。
+## 1. 对比范围
 
-## 1. 结论摘要
+本报告的主要对比对象是：
 
-三个系统都遵循 Raw Sources → Compiled Wiki → Schema，但优化目标不同：
+1. [Astro-Han/karpathy-llm-wiki](https://github.com/Astro-Han/karpathy-llm-wiki)：Karpathy LLM Wiki 思路的可运行 Skill 实现。
+2. [nashsu/llm_wiki](https://github.com/nashsu/llm_wiki)：完整桌面产品实现。
+3. Mobilework：本项目的多知识库 Agent 检索实现。
 
-- **mobilework（本项目）**：生命周期正确性最突出。稳定 source ID、精确 page↔source 血缘、staging、并发冲突拒绝、提交日志与可恢复删除构成完整安全链；检索侧已从早期「词法加权 + 1-hop 图扩展」升级为三通道（vector/keyword/graph）+ RRF 融合 + LanceDB 向量库的 MCP 服务，但大规模图算法仍是 MVP。
-- **nashsu/llm_wiki**：完整桌面产品和图分析最成熟。两阶段摄取、持久队列、四信号相关性、Louvain 社区、Sigma/Graphology/ForceAtlas2 和可选向量检索适合较大知识图谱。
-- **green-dalii/obsidian-llm-wiki**：Obsidian 内检索算法最强且有公开准确率。五阶段级联与 Monte-Carlo Personalized PageRank 不依赖 embedding，并公布 PPR@5 27.1%（其自有语料）。
+三方主实验使用相同的 50 个 Compiled Wiki 页面、相同 Query 和 Top-5 口径。nashsu 与 Mobilework 使用同一 OpenRouter `qwen/qwen3-embedding-8b` 的 4096 维 Query 向量；Mobilework 使用 Wiki-only。主表采用 `network_excluded` 口径比较本地检索实现，另设 `end_to_end` 组记录真实远程 Embedding 成本。没有在该口径下运行的数据不进入主结果表；失败不以模拟数据代替。
 
-不能诚实地给出"三个项目在本机的统一端到端秒数"：nashsu 是 Tauri/Rust 桌面应用，green 是 Obsidian 插件，且模型、Provider、并发、抽取粒度会支配总耗时。本报告将**参考实现实测**、**官方公开数据**和**架构推断**分开标记。
+## 2. 技术演进
 
-## 2. 算法对比
+### Karpathy 可运行版：最小范式
 
-| 维度 | mobilework | nashsu | green-dalii |
-|---|---|---|---|
-| 交付形态 | Python + OpenCode Skill + MCP 检索服务 | Tauri v2 / Rust + React | Obsidian TypeScript 插件 |
-| 增量身份 | SHA-256 + 稳定 UUID；移动唯一匹配 | 增量 cache、source watcher | Smart Batch Skip、内容 hash 去重 |
-| 摄取 | 单个 Agent batch 中编译/合并页面 | 两阶段 CoT：分析后生成 | 可调粒度实体/概念抽取；页面并发 3–5 |
-| 删除 | 独占页归档；共享页按幸存来源语义重写 | watcher 同步 delete cleanup | watcher + maintenance；保护 reviewed 页面 |
-| 写入安全 | staging → validate → commit；并发 hash；journal 回滚 | 持久队列、crash recovery、cancel/retry | allSettled、单页重试、取消与部分结果保留 |
-| 图谱节点 | 编译 Wiki 页面 | Wiki 页面 | Obsidian Wiki 页面 |
-| 图谱边 | Wikilink + 共享来源 + 共同邻居（keyword/graph 通道） | 同类四信号模型 | Wikilink；检索阶段运行 PPR |
-| 检索通道 | vector（LanceDB）+ keyword（词法打分）+ graph（1-hop 扩展），RRF 融合 | tokenized + graph relevance + 可选 LanceDB | Lex → LLM关键词 → 本地扫描 → LLM fallback → PPR |
-| 检索工具面 | 3 个 MCP 工具：retrieve / graph_neighbors / knowledge_tree | 桌面应用内建 | Obsidian 命令 |
-| 公开检索准确率 | 尚无 | 无同口径公开值 | PPR@5 27.1%，纯 kNN 24.1%（作者语料） |
-| Embedding | 可选（provider-agnostic；默认 qwen3-embedding-8b，可切本地部署）；缺失时向量通道降级、其余通道照常 | 可选 | 无 |
+Karpathy 路线的核心结构是：
 
-### 算法复杂度判断
-
-- mobilework 来源扫描：`O(S)`，S 为来源数；每次计算文件 hash。
-- mobilework 当前图谱：页面两两检查共享来源和共同邻居，约 `O(P²)`；graph 通道扩展同样受 `O(P²)` 影响。keyword 通道为词法打分，随语料规模线性。
-- nashsu：图谱建立后使用 Graphology/ForceAtlas2；四信号和 Louvain 成本取决于图规模，具有专门图数据结构和布局缓存，工程扩展性优于当前 mobilework。
-- green：词法扫描与页面数相关；PPR 使用 3,000 条随机游走 × 50 步，官方描述该扩展阶段成本 `O(K×L)`，与页面总数基本解耦，但前置候选扫描仍与 vault 大小相关。
-
-## 3. 本机性能实测（参考实现 new-wiki，尚未在 mobilework 重跑）
-
-环境：参考实现的 Windows 主机、Python 3.11；每项预热一次后重复采样，表中为中位数；使用 `tracemalloc`，因此绝对时间包含测量开销。合成页面每页2个 Wikilink、每2页共享一个来源。**以下数字为参考实现历史结果，仅作量级参考，不代表 mobilework 本机跑分。**
-
-| 来源/页面数 | 无变化扫描 | 单文件修改 | 单文件删除 | 全量图谱构建 | 查询候选检索 |
-|---:|---:|---:|---:|---:|---:|
-| 100 | 101.25 ms | 102.66 ms | 102.48 ms | 269.33 ms | 404.60 ms |
-| 300 | 308.09 ms | 305.62 ms | 303.37 ms | 1,809.40 ms | 2,240.62 ms |
-| 500 | 510.92 ms | 501.25 ms | 503.80 ms | 4,742.85 ms | 5,430.66 ms |
-
-观察：来源扫描近似线性，约 1.0 ms/来源（含 tracemalloc）；图谱从100到500页增长约17.6倍，符合二次复杂度趋势。500页时已不适合在每次查询中同步重建图谱——mobilework 检索侧因此改用 LanceDB 持久向量索引 + corpus 单例缓存（mtime 失效），避免每次查询重建。
-
-### 历史端到端观测（参考实现）
-
-根据 batch ID 创建时间与 `wiki/log.md` 提交时间计算（包含解析、OpenCode、模型网络和提交，不是严格受控实验）：
-
-- 5份PDF → 10个页面：约 **200 s**，约40 s/来源。
-- 1份PDF → 2个页面：约 **54 s**。
-- 删除1个来源并归档2页：约 **30 s**。
-
-这些数字说明端到端主要由模型调用支配，不能与使用不同模型/Provider的 baseline 秒数直接比较。
-
-## 4. 质量/能力评分（5分制，基于可验证功能，不是统一语料准确率）
-
-| 维度 | mobilework | nashsu | green |
-|---|---:|---:|---:|
-| 来源增删改正确性 | **5** | 4 | 3.5 |
-| 事务与并发保护 | **5** | 4 | 3.5 |
-| 图谱分析成熟度 | 2.5 | **5** | 3.5 |
-| 查询检索算法 | 3.5 | 4 | **5** |
-| 大规模图性能 | 2 | **4.5** | 4 |
-| 部署轻量性 | 4 | 3 | **5**（已有Obsidian时） |
-| 独立检索服务 | 4 | **5** | 2（依赖Obsidian） |
-
-评分依据：mobilework 的生命周期能力由本地生命周期/增量测试验证；检索侧新增 vector/keyword/graph 三通道 + RRF 融合，较早期纯词法方案提升（查询检索算法 2.5→3.5），但尚无统一语料准确率。baseline 分数来自其公开功能与架构说明，不代表同一测试集上的数值准确率。
-
-## 5. 公平三方端到端实验应如何做
-
-1. 固定同一台机器、同一模型、同一Provider、temperature、网络和并发数。
-2. 准备20份公开PDF：5个主题，每主题4份；记录页数和文本字符数。
-3. 统一抽取粒度：每来源最多1个source页、5个concept/entity页。
-4. 每个系统使用全新空 vault，冷启动3次、热启动5次。
-5. 分段计时：检测、解析、模型、落盘/提交、图谱更新、查询。
-6. 运行事件集：20新增、1修改、纯重命名、1删除独占、1删除共享来源、无变化扫描。
-7. 查询集至少30题：事实10、关系10、多跳5、知识缺口5。
-8. 人工盲评：事实正确率、Citation Hit@5、来源覆盖率、过时claim残留率、重复页面率、死链率。
-
-建议主指标：
-
-- `T_ingest_p50/p95`、`T_update_p50/p95`、`T_query_first_token/p50`
-- Citation Hit@5、Answer groundedness、Page dedup precision
-- 删除后 stale-claim rate（越低越好）
-- crash recovery success、manual interventions / 100 events
-- 总输入/输出 tokens 与API成本
-
-## 6. 最终判断与优化优先级
-
-如果论文/汇报重点是"原始资料变化后能否安全自动维护"，mobilework 的差异化最强；如果重点是"大图分析"，nashsu 更成熟；如果重点是"无embedding的图感知查询准确率"，green 当前证据最强。
-
-mobilework 检索侧现状与下一步：
-
-1. **已落地**：三通道检索（vector/keyword/graph）+ RRF 融合；LanceDB 持久向量索引 + `index_meta.json` 新鲜度判定；corpus 单例缓存（mtime 失效）避免每次查询重建图谱；向量通道 embedding 失败时降级、其余通道照常。
-2. 用 `source_id → pages` 倒排表替代所有页面两两比较，把共享来源边从 `O(P²)` 降到按桶生成。
-3. 缓存 adjacency 和页面前置信息，仅对变化页面增量更新。
-4. keyword 通道引入 BM25 或倒排索引，再做1–3 hop图扩展。
-5. 增加 PPR 对照组和固定查询集，报告 Hit@5/MRR，而不只比较功能。
-6. 对来源解析和独立页面生成增加受控并行；最终 commit 仍保持串行事务。
-
-## 7. 可复现文件
-
-- `tests/test_lifecycle.py` / `tests/test_incremental.py`：构建侧生命周期与增量测试。
-- `tests/test_retrieval.py`：检索侧三通道 / 融合 / 降级测试。
-
-评测组的确定性阶段基准脚本与原始结果 JSON（对应参考实现的 `benchmarks/benchmark_local.py` 与结果文件）在 mobilework 中尚未落地——`benchmarks/` 归评测组维护，本次重构不改动，当前仅有占位 `.gitkeep`。
-
-检索侧手动验证（有 embedding key 时）：
-
-```bash
-cd /Users/jialulu/projects/mobile-wiki/mobilework
-.venv/bin/python -m wiki_retrieval.index --limit 5      # 产出 .lancedb/index_meta.json
-.venv/bin/pytest tests -q                                # 生命周期 + 增量 + 检索测试
+```text
+Raw Sources
+    ↓ LLM Compile
+Compiled Wiki
+    ↓ Index / Skill
+Query and cited answer
 ```
+
+Astro-Han 的仓库将这一思路做成可运行 Skill。其价值是结构透明、依赖较少、适合作为最小 Baseline。查询主要依赖 Wiki Index、全文搜索和候选页面读取；它没有专门面向多知识库的路由、联邦融合和统一查询预算。
+
+### nashsu：桌面产品化
+
+nashsu 将摄取、增量维护、任务恢复、图关系、社区发现和可选向量检索整合进桌面应用。它代表从可运行 Skill 到持续维护知识库产品的工程化路线。主实验通过其原生本地 Search / Chat 接口执行，不为追求统一而替换其检索算法。
+
+### Mobilework：多库与 Agent 调度
+
+Mobilework 保留 Raw Sources → Compiled Wiki 的编译式结构，同时为每个知识库维护独立资料、配置、索引和生命周期状态。检索后端提供 Vector、Keyword、Graph 三通道与 RRF 融合；联邦层负责知识库路由、并行查询、故障隔离和全局排序；统一 Skill 负责问题拆解、证据充分性、冲突解释与停止决策。
+
+## 3. 能力对比
+
+| 维度 | Karpathy 可运行版 | nashsu | Mobilework |
+|---|---|---|---|
+| 主要定位 | 最小可运行 Wiki Skill | 桌面知识库产品 | Agent 驱动的多知识库检索系统 |
+| 查询入口 | Index、全文搜索、页面读取 | 原生 Search / Chat | MCP 检索接口 |
+| 检索能力 | 关键词与页面读取 | 词法、图关系、可选向量 | Vector、Keyword、Graph 与 RRF |
+| 多知识库 | 无专门路由 | 以应用项目为边界 | 独立 KB、目录路由与联邦检索 |
+| 调度方式 | 单 Skill 流程 | 应用内逻辑 | 统一 Skill + Profile + 后端守卫 |
+| 增量维护 | 依赖 Skill 与目录约定 | Watcher、持久队列、恢复 | Manifest、Staging、校验与 Journal |
+| 故障降级 | 无统一通道状态 | 由应用实现处理 | 向量失败后保留 Keyword/Graph，并返回降级状态 |
+| 查询预算 | 无统一硬预算 | 产品内部控制 | Profile 调度，代码执行时间与调用上限 |
+| 同语料实测 | 检索 13/36、回答 6/12 成功 | 向量检索 36/36、回答 12/12 成功 | 向量检索 36/36、回答 7/12 成功；Fast Skill 回归通过 |
+
+能力表描述可验证的实现差异，不是准确率评分。图谱成熟度、部署便利性或功能数量不能替代同语料检索结果。
+
+## 4. 三方实验协议
+
+### 检索实验
+
+使用 Q01、Q03、Q04、Q06、Q07、Q08、Q10、Q12、Q15、Q18、Q19、Q20。每个系统每题重复 3 次，比较 Hit@5、MRR、无关证据率和可比本地检索 p95。nashsu 与 Mobilework 在计时前共享完全相同的 Query 向量；计时内分别执行各自原生索引、图/关键词融合与排序。两者保留原生切块和融合算法，因此结论限定为“同模型、同语料、不同检索实现”。
+
+### 端到端回答
+
+使用 Q01、Q08、Q15、Q18、Q19、Q20。每个系统每题重复 2 次，统一回答模型、中文 Prompt、Top-5 证据和证据长度。评分事实覆盖、Citation Recall、Groundedness、冲突处理、拒答和陈旧事实错误。
+
+### 复现记录
+
+每条结果必须包含系统 ID、仓库 Commit、运行时间、Query、条件、重复序号、状态和原始候选。只记录真实结果；失败和不可用状态单独进入 Failures。
+
+<!-- AUTO:BASELINE_RESULTS_START -->
+
+| 系统 | Commit | 成功检索数 | Hit@5 | MRR | 检索 p95 | 回答质量 |
+|---|---|---:|---:|---:|---:|---:|
+| Astro-Han/karpathy-llm-wiki | `eafcc77001e496cc43499e4923b663aec722c813` | 13/36 | 76.9%* | 71.2%* | 63,331.7 ms* | 39.2%*（6/12 成功子集） |
+| nashsu/llm_wiki | `e8082119649e6a8e1cf85eaf289adcabfdf39d4e` | 36/36 | 75.0% | 49.3% | 71.5 ms | 35.5%（12/12） |
+| Mobilework | `e7ead96` | 36/36 | 75.0% | 59.7% | 44.9 ms | 28.5%*（7/12 成功子集） |
+
+带星号的指标只基于成功子集，必须与成功覆盖率一起阅读。nashsu 与 Mobilework 的 Hit@5 均为 75.0%；Mobilework MRR 高 10.4 个百分点，本地 p95 低 37.2%。Karpathy 的成功子集质量较高，但 23/36 条检索仍失败，因此不能用 13 条成功样本直接宣称优于完整样本系统。
+
+端到端组的检索 p95 为 Mobilework 20,161.5 ms、nashsu 13,664.7 ms；Embedding API p50/p95 分别约为 4,829.7/20,116.6 ms 与 2,199.8/13,599.1 ms。相较于 44.9/71.5 ms 的本地检索 p95，远程 Embedding 是当前部署时延的主要组成，但主表没有采用事后相减的估算值。
+
+<!-- AUTO:BASELINE_RESULTS_END -->
+
+## 5. 当前可复用的 Mobilework 结果
+
+`multikb-vector-20260904` 共完成 364 次真实语料检索，其中 4 次发生通道降级。小样本结果如下：
+
+| 配置 | 样本数 | Hit@5 | p95 延迟 |
+|---|---:|---:|---:|
+| Keyword | 20 | 80% | 0.032 秒 |
+| Vector | 20 | 95% | 7.17 秒 |
+| Vector + Keyword | 20 | 90% | 5.20 秒 |
+| Vector + Keyword + Graph | 60 | 90% | 15.72 秒 |
+
+这些数据用于 Mobilework 内部通道消融，不代表三方胜负。回答由确定性摘句产生，不能视为完整 Agent 回答质量。三通道样本数更多，网络状态随运行时间变化，第一条 Vector 请求还存在异常长等待。因此只能报告本批观测到的召回与延迟权衡。
+
+`multikb-local-20260904` 仅用于无向量降级和本地延迟参考。旧 terminal profile 仅作为统一 Skill 改造前快照。历史结果与当前分支结果通过 provenance 标签分开。
+
+## 6. Mobilework 的实验结论
+
+本分支对这些主张的验证结果如下：
+
+- 模糊 Query：加入可审计的口语术语扩展和语义优先融合后，Keyword 的口语 Hit@5 从优化前 33.3% 提至 83.3%，Vector + Keyword 从 50.0% 提至 100%，三通道从 66.7% 提至 100%；三通道口语 MRR 从 38.9% 提至 91.7%。Vector 继续保持 100% Hit@5，口语 MRR 为 88.9%。这些数字来自 6 个独立问题，属于小样本回归结果。
+- 多库路由：自动、全库和 Gold KB 的 Hit@5 均为 87.5%；自动路由 p95 为 18.72 秒，较全库的 28.27 秒低 33.8%。无关证据率均为 0，因此只验证了延迟收益，没有验证污染率下降。
+- 故障隔离：关闭向量和注入 Embedding 错误时，六道题均继续返回结果且 Hit@5 为 100%；MRR 从正常向量的 58.3% 降至 47.8%，验证了“可降级”，没有验证“质量不变”。
+- 时间证据：F2/F3 的 Hit@5 从 87.5% 提至 100%，但人工陈旧事实错误率仍为 62.5%，该主张尚未通过。
+- Agent 调度：Profile Reference 注入、旧配置兼容、预算守卫和工作簿公式共 13 个 Node 测试通过；真实 Agent 回归中 Fast-Q01 成功，其余 4 项仍失败。
+- 知识缺口：Research-Q20 两次尝试后仍失败，暂不能声称拒答已被端到端验证。
+
+OpenRouter Embedding 已在 Mobilework 检索重试中真实跑通。端到端 Qwen/OpenCode 超时是另一条链路的问题，不能把向量成功等同于 Agent 回归成功。
+
+## 7. 相关工作补充：green-dalii
+
+[green-dalii/obsidian-llm-wiki](https://github.com/green-dalii/obsidian-llm-wiki) 展示了 Obsidian 内的多阶段级联检索与 Personalized PageRank 路线，适合说明无 Embedding 的图感知检索。其公开成绩来自作者自有语料，语料、问题和运行环境与本次实验不同，因此放在相关工作部分，不进入 Karpathy、nashsu、Mobilework 的主对比表。
+
+后续若把它加入统一实验，需要为 Obsidian 原生接口建立独立适配器，并保持同一 Wiki、Query 和 Top-5 口径。此前不报告跨语料排名。
 
 ## 8. 证据边界
 
-- 第 3 节本机数字来自参考实现 new-wiki 的历史实测，未在 mobilework 上重跑，仅作量级参考。
-- 本机无法稳定下载两个公开仓库（GitHub连接被重置），因此没有伪造 baseline 本机耗时。
-- nashsu和green的算法、技术栈、并发建议及公开准确率来自各自官方README/Discussion。
-- green的PPR@5结果来自其自有语料，不能当作三方统一benchmark结论。
-- "Rust/Graphology预期更快""检索通道升级带来准确率提升"等属于架构推断或功能层判断，必须在统一实验完成后才能转化为实测结论。
+- 三方结果只有在真实仓库成功运行后才写入；失败原因与成功次数同时展示。
+- nashsu 与 Karpathy 的原生返回若不包含某项指标，该项显示 `n.a.`，不由其他指标推断。
+- 远程模型、Embedding、冷/热缓存和网络波动会影响延迟，实验保留单次记录与 p95。
+- 20 题题库是项目级小样本。重复运行衡量稳定性，不增加独立题目数。
+- Hit@5 和 MRR 衡量检索，不等同于最终回答正确率。
+- 新鲜度来源召回提升不等同于陈旧事实错误下降，后者必须依赖人工标签。
+- nashsu 主实验已配置与 Mobilework 相同的 OpenRouter 向量模型，并要求每条检索 `vectorHits > 0`；旧 token+graph 的 36 条检索仅作为消融组保留（Hit@5 50.0%、MRR 37.5%、p95 57.9 ms），不参与主表胜负。
+- Karpathy 与 Mobilework 的失败项按 180 秒上限独立重试；仍失败的记录保留为失败或不可用，没有补值。

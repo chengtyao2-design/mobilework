@@ -14,6 +14,7 @@ from pathlib import Path
 
 from . import dedup, fusion, index, loader
 from .channels import graph, keyword, vector
+from .textutil import expand_conversational_query
 
 DEFAULT_TOP_K = 10
 MAX_RESULTS = 50
@@ -115,7 +116,21 @@ def retrieve(
     include_content: bool = False,
     verbose: bool = False,
     root: Path | None = None,
+    kb_ids: list[str] | None = None,
+    profile: str | None = None,
+    overrides: dict | None = None,
 ) -> dict:
+    resolved_root = loader.find_root() if root is None else Path(root)
+    if (resolved_root / "mobilework.config.json").is_file() or kb_ids is not None:
+        from .federated import retrieve as federated_retrieve
+        options = (overrides or {}).get("retrieval", {})
+        if options:
+            channels = [c for c in ALL_CHANNELS if options.get(c, c != "graph")]
+        elif profile:
+            channels = ["vector"] if profile == "fast" else ["vector", "keyword"]
+        return federated_retrieve(resolved_root, query, kb_ids=kb_ids, scope=scope,
+            channels=channels, top_k=top_k, rrf_k=rrf_k, include_content=include_content,
+            verbose=verbose, claim_freshness_mode=options.get("claim_freshness_mode", "off"))
     started = time.perf_counter()
     if not query or not query.strip():
         raise ValueError("query is required")
@@ -131,8 +146,10 @@ def retrieve(
             f"{corpus.root / loader.SOURCE_DIR}"
         )
 
-    previous = dedup.lookup(scope, active, query)
+    dedup_scope = f"{corpus.root}::{scope}"
+    previous = dedup.lookup(dedup_scope, active, query)
 
+    lexical_query, expansion_terms = expand_conversational_query(query)
     runs: list[fusion.Run] = []
     embedding_status: dict = {"status": "disabled", "error": "vector channel not requested"}
     vector_hits = 0
@@ -144,18 +161,24 @@ def retrieve(
             vector_hits = len(vector_run.ordered)
             runs.append(vector_run)
     if "keyword" in active:
-        runs.append(keyword.run(corpus, query, scope, include_content))
+        runs.append(keyword.run(corpus, lexical_query, scope, include_content))
     if "graph" in active:
-        runs.append(graph.run(corpus, query, include_content))
+        runs.append(graph.run(corpus, lexical_query, include_content))
 
-    fused = fusion.rrf(runs, rrf_k)
+    adaptive_weights = None
+    if expansion_terms and "vector" in active:
+        # A conversational expansion is useful for lexical recall but is a
+        # weaker signal than the original semantic query.  Equal-weight RRF can
+        # otherwise push a strong vector hit out of a small Top-K result set.
+        adaptive_weights = {"vector": 1.0, "keyword": 0.35, "graph": 0.20}
+    fused = fusion.rrf(runs, rrf_k, weights=adaptive_weights)
     ranking = fused["ranking"][:limit]
     for entry in ranking:
         entry["origin"] = "fused"
 
     graph_slots = 0
     graph_used = 0
-    if "graph" in active:
+    if "graph" in active and not expansion_terms:
         graph_slots = graph.quota(limit, vector_hits)
         graph_used = graph.expand(
             ranking, corpus, limit, graph_slots, include_content, fused["rrf_k"]
@@ -166,6 +189,8 @@ def retrieve(
 
     payload = {
         "query": query,
+        "retrieval_query": lexical_query,
+        "query_expansion": {"applied": bool(expansion_terms), "terms": expansion_terms},
         "scope": scope,
         "channels": active,
         "embedding": embedding_status,
@@ -187,7 +212,7 @@ def retrieve(
         }
 
     dedup.remember(
-        scope,
+        dedup_scope,
         active,
         query,
         {

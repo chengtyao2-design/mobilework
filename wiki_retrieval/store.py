@@ -36,6 +36,7 @@ def arrow_schema(dim: int):
             pa.field("chunk_index", pa.uint32(), nullable=False),
             pa.field("chunk_text", pa.utf8(), nullable=False),
             pa.field("heading_path", pa.utf8(), nullable=False),
+            pa.field("scope", pa.utf8(), nullable=False),
             pa.field(
                 "vector",
                 pa.list_(pa.field("item", pa.float32(), nullable=True), dim),
@@ -83,7 +84,7 @@ def _validate_query(query: list[float]) -> list[float]:
     return vector
 
 
-def search(root: Path, query: list[float], top_k: int) -> list[dict]:
+def search(root: Path, query: list[float], top_k: int, scope: str = "both") -> list[dict]:
     """Return chunk hits; page diversity is enforced by the retrieval channel."""
     vector = _validate_query(query)
     top_k = int(top_k)
@@ -92,8 +93,13 @@ def search(root: Path, query: list[float], top_k: int) -> list[dict]:
     table = _open_table(root)
     if table is None:
         return []
+    search_query = table.search(vector)
+    if scope != "both" and "scope" in table.schema.names:
+        if scope not in ("wiki", "source"):
+            raise ValueError("invalid scope")
+        search_query = search_query.where(f"scope = '{scope}'", prefilter=True)
     rows = (
-        table.search(vector)
+        search_query
         .limit(top_k)
         .select(_SEARCH_COLUMNS)
         .to_arrow()
@@ -155,6 +161,7 @@ def replace_all(root: Path, rows: list[dict], dim: int) -> None:
             pa.array([int(row["chunk_index"]) for row in rows], type=pa.uint32()),
             pa.array([str(row["chunk_text"]) for row in rows], type=pa.utf8()),
             pa.array([str(row["heading_path"]) for row in rows], type=pa.utf8()),
+            pa.array([str(row.get("scope", "wiki")) for row in rows], type=pa.utf8()),
             pa.FixedSizeListArray.from_arrays(pa.array(flat, type=pa.float32()), dim),
         ],
         schema=schema,

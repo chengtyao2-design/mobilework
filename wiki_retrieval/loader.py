@@ -239,7 +239,26 @@ def result_stub(doc: Doc, include_content: bool = False, anchor: str = "") -> di
         "matched_chunks": [],
         "graph_related_to": [],
     }
+    if doc.scope == "source":
+        stub["source_metadata"] = source_metadata(doc.content)
     return stub
+
+
+def source_metadata(content: str) -> dict:
+    """Expose source dates without substituting filesystem or ingest dates."""
+    from .textutil import frontmatter_value
+    values = {}
+    for key in ("source_url", "publisher", "published_at", "source_published_at",
+                "source_updated_at", "updated_at", "effective_from", "effective_to",
+                "accessed_at", "access_status", "license", "extraction_type"):
+        value = frontmatter_value(content, key)
+        if value and value.lower() not in ("null", "none", "~"):
+            values[key] = value
+    if "source_published_at" not in values and "published_at" in values:
+        values["source_published_at"] = values["published_at"]
+    if "source_updated_at" not in values and "updated_at" in values:
+        values["source_updated_at"] = values["updated_at"]
+    return values
 
 
 def chunk_result(chunk: dict, include_content: bool, **scores: float) -> dict:
@@ -249,6 +268,7 @@ def chunk_result(chunk: dict, include_content: bool, **scores: float) -> dict:
         "chunk_index": int(chunk["chunk_index"]),
         "heading_path": chunk["heading_path"],
         "scores": {name: float(value) for name, value in scores.items()},
+        "claim_ids": list(chunk.get("claim_ids", [])),
     }
     if include_content:
         result["text"] = chunk["text"]

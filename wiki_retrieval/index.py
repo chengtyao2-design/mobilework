@@ -25,7 +25,7 @@ from .chunking import (
     WIKI_TARGET_CHARS,
 )
 
-CHUNKING_STRATEGY = "markdown_chunk_v2"
+CHUNKING_STRATEGY = "markdown_chunk_v3_claims_sources"
 DEFAULT_BATCH = 16
 META_FILENAME = "index_meta.json"
 
@@ -49,7 +49,7 @@ def freshness(root: Path) -> dict:
     """`stale_index` is true whenever a wiki page is newer than the index, and
     also when no index exists at all — both mean vector hits cannot be trusted."""
     root = Path(root)
-    corpus_max_mtime = loader.scan_max_mtime(root, "wiki")
+    corpus_max_mtime = loader.scan_max_mtime(root, "both")
     meta = read_meta(root)
     if meta is None:
         return {
@@ -95,7 +95,7 @@ def freshness(root: Path) -> dict:
 
 
 def _rows(root: Path, limit: int | None) -> list[dict]:
-    docs = loader.load_corpus(root).wiki_docs
+    docs = loader.load_corpus(root).docs("both")
     if limit is not None:
         docs = docs[:limit]
     return [
@@ -106,6 +106,7 @@ def _rows(root: Path, limit: int | None) -> list[dict]:
             "chunk_text": chunk["text"],
             "embedding_text": chunk["embedding_text"],
             "heading_path": chunk["heading_path"],
+            "scope": doc.scope,
         }
         for doc in docs
         for chunk in doc.chunks
@@ -126,7 +127,7 @@ def write_meta(root: Path, dim: int, rows: int, wiki_pages: int | None = None) -
             "overlap_chars": WIKI_OVERLAP_CHARS,
             "min_heading_split_chars": WIKI_MIN_HEADING_SPLIT_CHARS,
         },
-        "corpus_max_mtime": loader.scan_max_mtime(root, "wiki"),
+        "corpus_max_mtime": loader.scan_max_mtime(root, "both"),
     }
     path = meta_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)

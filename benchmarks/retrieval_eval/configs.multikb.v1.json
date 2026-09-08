@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "ablations": [
+    {"id":"C01","name":"Vector","profile":"fast","retrieval":{"vector":true,"keyword":false,"graph":false,"decompose":false,"sufficiency_check":false,"scope":"all","raw_evidence_fallback":false},"budget":{"deadline_ms":15000,"max_tool_calls":1,"max_subqueries":1,"max_graph_depth":0,"max_evidence_chars":12000}},
+    {"id":"C02","name":"Keyword","profile":"fast","retrieval":{"vector":false,"keyword":true,"graph":false,"decompose":false,"sufficiency_check":false,"scope":"all","raw_evidence_fallback":false},"budget":{"deadline_ms":15000,"max_tool_calls":1,"max_subqueries":1,"max_graph_depth":0,"max_evidence_chars":12000}},
+    {"id":"C03","name":"Vector + Keyword","profile":"balanced","retrieval":{"vector":true,"keyword":true,"graph":false,"decompose":false,"sufficiency_check":false,"scope":"all","raw_evidence_fallback":false},"budget":{"deadline_ms":20000,"max_tool_calls":2,"max_subqueries":1,"max_graph_depth":0,"max_evidence_chars":12000}},
+    {"id":"C04","name":"Vector + Keyword + Graph","profile":"reasoning","retrieval":{"vector":true,"keyword":true,"graph":true,"decompose":false,"sufficiency_check":false,"scope":"all","raw_evidence_fallback":false},"budget":{"deadline_ms":30000,"max_tool_calls":3,"max_subqueries":1,"max_graph_depth":1,"max_evidence_chars":16000}},
+    {"id":"C05","name":"Hybrid + Decompose","profile":"reasoning","retrieval":{"vector":true,"keyword":true,"graph":false,"decompose":true,"sufficiency_check":false,"scope":"all","raw_evidence_fallback":false},"budget":{"deadline_ms":30000,"max_tool_calls":4,"max_subqueries":3,"max_graph_depth":0,"max_evidence_chars":16000}},
+    {"id":"C06","name":"Hybrid + Decompose + Sufficiency","profile":"reasoning","retrieval":{"vector":true,"keyword":true,"graph":false,"decompose":true,"sufficiency_check":true,"scope":"all","raw_evidence_fallback":false},"budget":{"deadline_ms":45000,"max_tool_calls":5,"max_subqueries":3,"max_graph_depth":0,"max_evidence_chars":18000}},
+    {"id":"C07","name":"Wiki-only Agentic","profile":"research","retrieval":{"vector":true,"keyword":true,"graph":true,"decompose":true,"sufficiency_check":true,"scope":"wiki","raw_evidence_fallback":false},"budget":{"deadline_ms":90000,"max_tool_calls":8,"max_subqueries":3,"max_graph_depth":2,"max_evidence_chars":24000}},
+    {"id":"C08","name":"Raw-only Agentic","profile":"research","retrieval":{"vector":true,"keyword":true,"graph":false,"decompose":true,"sufficiency_check":true,"scope":"raw","raw_evidence_fallback":false},"budget":{"deadline_ms":90000,"max_tool_calls":8,"max_subqueries":3,"max_graph_depth":0,"max_evidence_chars":24000}},
+    {"id":"C09","name":"Wiki-first + Raw-verify","profile":"research","retrieval":{"vector":true,"keyword":true,"graph":true,"decompose":true,"sufficiency_check":true,"scope":"wiki_first","raw_evidence_fallback":true},"budget":{"deadline_ms":90000,"max_tool_calls":8,"max_subqueries":3,"max_graph_depth":2,"max_evidence_chars":24000}}
+  ],
+  "freshness": [
+    {"id":"F0","name":"Freshness off","profile":"balanced","retrieval":{"claim_freshness_mode":"off"},"budget":{"deadline_ms":30000,"max_tool_calls":4,"max_subqueries":3,"max_graph_depth":1,"max_evidence_chars":16000}},
+    {"id":"F1","name":"Freshness context","profile":"balanced","retrieval":{"claim_freshness_mode":"context"},"budget":{"deadline_ms":30000,"max_tool_calls":4,"max_subqueries":3,"max_graph_depth":1,"max_evidence_chars":16000}},
+    {"id":"F2","name":"Freshness rerank","profile":"balanced","retrieval":{"claim_freshness_mode":"rerank"},"budget":{"deadline_ms":30000,"max_tool_calls":4,"max_subqueries":3,"max_graph_depth":1,"max_evidence_chars":16000}},
+    {"id":"F3","name":"Freshness both","profile":"balanced","retrieval":{"claim_freshness_mode":"both"},"budget":{"deadline_ms":30000,"max_tool_calls":4,"max_subqueries":3,"max_graph_depth":1,"max_evidence_chars":16000}}
+  ]
+}

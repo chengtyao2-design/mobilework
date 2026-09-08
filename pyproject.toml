@@ -34,3 +34,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["wiki_common", "wiki_maintainer", "wiki_retrieval", "wiki_retrieval.channels"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["benchmarks/retrieval_eval/artifacts"]

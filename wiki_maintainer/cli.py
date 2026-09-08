@@ -27,6 +27,7 @@ from .core import (
     rewrite_moved_paths,
     status,
 )
+from .project import KnowledgeBaseError, resolve_kb_root
 
 WIKI_CATEGORIES = ("concepts", "entities", "references", "skills", "sources", "synthesis")
 EMBEDDING_KEYS = ("EMBEDDING_BASE_URL", "EMBEDDING_API_KEY", "EMBEDDING_MODEL")
@@ -384,11 +385,17 @@ def _check_embedding_probe(values: dict[str, str]) -> dict[str, str]:
     return _check("embedding_probe", "ok", f"model={model} dimension={len(vector)}")
 
 
-def doctor(root: Path, probe: bool = False) -> dict[str, Any]:
+def doctor(root: Path, probe: bool = False, env_root: Path | None = None) -> dict[str, Any]:
     """只读体检：不创建目录、不写状态文件。"""
-    env_exists, env_values = _env_values(root)
+    env_root = (env_root or root).resolve()
+    env_exists, env_values = _env_values(env_root)
     layout, config_parseable = _check_layout(root)
-    checks = [_check_interpreter(), _check_dependencies(), _check_embedding_env(root, env_values, env_exists), layout]
+    checks = [
+        _check_interpreter(),
+        _check_dependencies(),
+        _check_embedding_env(env_root, env_values, env_exists),
+        layout,
+    ]
     if not config_parseable:
         checks.append(_check("manifest", "fail", "wiki.config.json 不可解析，跳过检查"))
         checks.append(_check("batch_residue", "fail", "wiki.config.json 不可解析，跳过检查"))
@@ -406,6 +413,9 @@ def doctor(root: Path, probe: bool = False) -> dict[str, Any]:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog="wiki", description="Deterministic lifecycle engine for an OpenCode LLM Wiki")
     result.add_argument("--root", default=".", help="Wiki project root")
+    kb_target = result.add_mutually_exclusive_group()
+    kb_target.add_argument("--kb", help="Knowledge-base id from mobilework.config.json")
+    kb_target.add_argument("--kb-root", help="Explicit knowledge-base root (must contain wiki.config.json)")
     sub = result.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
     sub.add_parser("status")
@@ -455,7 +465,16 @@ def main(argv: list[str] | None = None) -> int:
         parser().print_help(sys.stderr)
         return 0
     args = parser().parse_args(argv)
-    root = _root(args.root)
+    app_root = _root(args.root)
+    try:
+        root = resolve_kb_root(
+            app_root,
+            kb=args.kb,
+            kb_root=_root(args.kb_root) if args.kb_root else None,
+        )
+    except KnowledgeBaseError as error:
+        print(json.dumps({"status": "error", "error": str(error)}, ensure_ascii=False), file=sys.stderr)
+        return 2
     if args.command == "doctor":
         _splash()
     try:
@@ -517,7 +536,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         elif args.command == "doctor":
-            report = doctor(root, args.probe)
+            report = doctor(root, args.probe, app_root)
             emit(report)
             _doctor_summary(report)
             return 1 if report["status"] == "fail" else 0

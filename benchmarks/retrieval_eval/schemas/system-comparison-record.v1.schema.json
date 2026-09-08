@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mobilework.local/schemas/system-comparison-record.v1.schema.json",
+  "title": "Cross-system retrieval comparison raw run",
+  "type": "object",
+  "required": [
+    "schema_version", "record_type", "run_id", "experiment_id", "system_id",
+    "system_name", "system_commit", "provenance_label", "provenance_origin",
+    "question_id", "query", "query_variant", "condition_id", "repeat", "seed",
+    "mode", "status", "started_at", "finished_at", "latency_ms", "tool_calls",
+    "results", "answer", "citations", "failure_detail", "metrics"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "record_type": {"const": "system_comparison_run"},
+    "run_id": {"type": "string", "minLength": 1},
+    "attempt_id": {"type": "string", "minLength": 1},
+    "attempt": {"type": "integer", "minimum": 1},
+    "superseded": {"type": "boolean"},
+    "superseded_by": {"type": ["string", "null"]},
+    "experiment_id": {"type": "string", "minLength": 1},
+    "system_id": {"enum": ["karpathy", "nashsu", "mobilework"]},
+    "system_name": {"type": "string"},
+    "system_commit": {"type": "string"},
+    "provenance_label": {"enum": ["current_run", "historical_result"]},
+    "provenance_origin": {"type": "string"},
+    "question_id": {"type": "string", "pattern": "^Q[0-9]{2}$"},
+    "query": {"type": "string", "minLength": 1},
+    "query_variant": {"enum": ["standard", "fuzzy"]},
+    "condition_id": {"type": "string"},
+    "repeat": {"type": "integer", "minimum": 1},
+    "seed": {"type": "integer"},
+    "mode": {"enum": ["retrieval", "answer"]},
+    "status": {"enum": ["ok", "unavailable", "failed"]},
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "latency_ms": {"type": "number", "minimum": 0},
+    "tool_calls": {"type": "integer", "minimum": 0},
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rank", "kb_id", "path", "title", "snippet", "score", "source"],
+        "properties": {
+          "rank": {"type": "integer", "minimum": 1, "maximum": 5},
+          "kb_id": {"type": "string"},
+          "path": {"type": "string"},
+          "title": {"type": "string"},
+          "snippet": {"type": "string"},
+          "score": {"type": ["number", "null"]},
+          "source": {"type": "string"}
+        }
+      }
+    },
+    "answer": {"type": "string"},
+    "citations": {"type": "array", "items": {"type": "string"}},
+    "queried_kb_ids": {"type": "array", "items": {"type": "string"}},
+    "channels": {"type": "array", "items": {"type": "string"}},
+    "degradation_detail": {"type": "array", "items": {"type": "string"}},
+    "failure_detail": {"type": "string"},
+    "evaluator_mode": {"type": "string"},
+    "metrics": {
+      "type": "object",
+      "required": ["hit_at_5", "mrr", "citation_recall", "irrelevant_evidence_rate", "factual_correctness", "grounded_ratio", "conflict_handling", "abstention_score", "stale_fact_error"],
+      "properties": {
+        "hit_at_5": {"type": "number", "minimum": 0, "maximum": 1},
+        "mrr": {"type": "number", "minimum": 0, "maximum": 1},
+        "citation_recall": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "irrelevant_evidence_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "factual_correctness": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "grounded_ratio": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "conflict_handling": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "abstention_score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "stale_fact_error": {"type": ["integer", "null"], "minimum": 0, "maximum": 1}
+      }
+    }
+  },
+  "additionalProperties": true
+}

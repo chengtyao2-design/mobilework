@@ -128,6 +128,14 @@ def chunk_document(
 
     chunks: list[dict[str, Any]] = []
     occurrences: dict[str, int] = {}
+    # Parse provenance before stripping comments. The marker annotates the
+    # preceding material paragraph; chunks may overlap multiple such claims.
+    from wiki_maintainer.incremental import parse_claims
+    try:
+        parsed = parse_claims(content) if scope == "wiki" else []
+    except ValueError:
+        parsed = []  # legacy malformed provenance is unverified, never evidence
+    claim_blocks = [(claim.claim_id, _CLAIM_MARKER.sub("", content[claim.block_start:claim.block_end]).strip()) for claim in parsed]
     for ordinal, (heading_path, text) in enumerate(assembled):
         normalized = " ".join(text.split())
         base = hashlib.sha256(
@@ -145,6 +153,10 @@ def chunk_document(
                 "heading_path": rendered_heading,
                 "text": text,
                 "embedding_text": f"{rendered_heading}\n{text}".strip(),
+                "claim_ids": [identifier for identifier, block in claim_blocks
+                              if block and (block in text or text in block or
+                                  any(text[start:start + 40] in block
+                                      for start in range(0, max(0, len(text) - 39), 20)))],
             }
         )
     return chunks
