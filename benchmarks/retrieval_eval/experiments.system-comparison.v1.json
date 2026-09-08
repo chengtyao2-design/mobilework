@@ -17,6 +17,12 @@
       "repeats": 3,
       "conditions": [{"id": "native_top5", "mode": "retrieval"}]
     },
+    "system_retrieval_end_to_end": {
+      "systems": ["nashsu", "mobilework"],
+      "question_ids": ["Q01", "Q03", "Q04", "Q06", "Q07", "Q08", "Q10", "Q12", "Q15", "Q18", "Q19", "Q20"],
+      "repeats": 3,
+      "conditions": [{"id": "native_top5_end_to_end", "mode": "retrieval"}]
+    },
     "system_answer": {
       "systems": ["karpathy", "nashsu", "mobilework"],
       "question_ids": ["Q01", "Q08", "Q15", "Q18", "Q19", "Q20"],

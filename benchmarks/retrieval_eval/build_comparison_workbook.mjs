@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { SpreadsheetFile, Workbook } from "@oai/artifact-tool";
+import { directAverageFormula, directP95Formula } from "./workbook_formulas.mjs";
 
 const [reportPath, outputPath, previewDir] = process.argv.slice(2);
 if (!reportPath || !outputPath || !previewDir) {
@@ -112,11 +113,6 @@ function averageIfs(valueRange, criteria) {
   return `=IF(${countIfs(metricCriteria)}=0,\"n.a.\",AVERAGEIFS(${valueRange},${criteria.flatMap(([range, value]) => [range, `"${excelText(value)}"`]).join(",")}))`;
 }
 
-function p95Ifs(latencyRange, criteria) {
-  const filter = criteria.map(([range, value]) => `(${range}=\"${excelText(value)}\")`).join("*");
-  return `=IF(${countIfs(criteria)}=0,\"n.a.\",SMALL(FILTER(${latencyRange},${filter}),ROUNDUP(${countIfs(criteria)}*0.95,0)))`;
-}
-
 const systems = asArray(report.systems).length ? asArray(report.systems) : [
   { id: "karpathy", name: "Astro-Han/karpathy-llm-wiki", repository: "https://github.com/Astro-Han/karpathy-llm-wiki" },
   { id: "nashsu", name: "nashsu/llm_wiki", repository: "https://github.com/nashsu/llm_wiki" },
@@ -126,6 +122,13 @@ const rawRuns = asArray(report.raw_runs ?? report.runs);
 const questions = asArray(report.questions);
 const failureInput = asArray(report.failures);
 const failures = failureInput.length ? failureInput : rawRuns.filter((row) => !["ok", "degraded"].includes(row.status));
+const activeRuns = rawRuns.filter((row) => !row.superseded);
+const activeFailures = activeRuns.filter((row) => !["ok", "degraded"].includes(row.status));
+const supersededRuns = rawRuns.filter((row) => row.superseded);
+const percentile95 = (values) => {
+  const ordered = values.filter((value) => typeof value === "number" && Number.isFinite(value)).sort((a, b) => a - b);
+  return ordered.length ? ordered[Math.max(0, Math.ceil(.95 * ordered.length) - 1)] : null;
+};
 
 const rawHeaders = [
   "run_id", "experiment_id", "system_id", "system_name", "system_commit", "provenance_label",
@@ -134,7 +137,7 @@ const rawHeaders = [
   "top_sources", "queried_kb_ids", "channels", "route_detail", "degradation_detail", "failure_detail",
   "hit_at_5", "mrr", "citation_recall", "irrelevant_evidence_rate", "factual_correctness",
   "grounded_ratio", "conflict_handling", "abstention_score", "stale_fact_error", "answer", "citations",
-  "quality_score", "condition", "adapter_metadata",
+  "quality_score", "condition", "adapter_metadata", "active_result", "attempt", "attempt_id", "superseded_by",
 ];
 const rawRows = rawRuns.map((row) => {
   const results = asArray(row.results);
@@ -150,11 +153,12 @@ const rawRows = rawRuns.map((row) => {
     metric(row, "irrelevant_evidence_rate"), metric(row, "factual_correctness"), metric(row, "grounded_ratio"),
     metric(row, "conflict_handling"), metric(row, "abstention_score"), metric(row, "stale_fact_error"),
     row.answer, asText(row.citations), qualityScore(row), asText(row.condition), asText(row.adapter_metadata),
+    row.superseded ? 0 : 1, row.attempt ?? 1, row.attempt_id ?? `${row.run_id}:a1`, row.superseded_by ?? null,
   ].map(asText);
 });
 const rawSheet = addDataSheet(
   "Raw Runs", "真实运行明细", rawHeaders, rawRows,
-  [30,18,14,28,18,18,24,10,46,14,22,9,10,12,14,21,21,14,12,12,54,25,24,46,42,55,12,12,15,20,18,16,18,17,18,70,45,16],
+  [30,18,14,28,18,18,24,10,46,14,22,9,10,12,14,21,21,14,12,12,54,25,24,46,42,55,12,12,15,20,18,16,18,17,18,70,45,16,24,58,12,10,38,58],
   { freezeColumns: 3 },
 );
 const rawEnd = Math.max(5, rawRows.length + 4);
@@ -180,12 +184,13 @@ const R = {
   citation: `'Raw Runs'!$AC$5:$AC$${rawEnd}`, irrelevant: `'Raw Runs'!$AD$5:$AD$${rawEnd}`,
   abstention: `'Raw Runs'!$AH$5:$AH$${rawEnd}`, stale: `'Raw Runs'!$AI$5:$AI$${rawEnd}`,
   quality: `'Raw Runs'!$AL$5:$AL$${rawEnd}`,
+  active: `'Raw Runs'!$AO$5:$AO$${rawEnd}`,
 };
-const okCriteria = (extra = []) => [[R.status, "ok"], ...extra];
+const okCriteria = (extra = []) => [[R.status, "ok"], [R.active, 1], ...extra];
 const directAverage = (column, predicate) => {
-  const refs = rawRuns.flatMap((item, index) => predicate(item) ? [`'Raw Runs'!${column}${index + 5}`] : []);
-  return refs.length ? `=AVERAGE(${refs.join(",")})` : '="n.a."';
+  return directAverageFormula(rawRuns, column, predicate);
 };
+const directP95 = (column, predicate) => directP95Formula(rawRuns, column, predicate);
 
 const systemRows = systems.map((system) => [system.id, system.name ?? system.id, system.commit, system.status ?? "not_run", null, null, null, null, null, null, null].map(asText));
 const systemSheet = addDataSheet(
@@ -195,19 +200,19 @@ const systemSheet = addDataSheet(
 );
 systems.forEach((system, index) => {
   const row = index + 5;
-  const retrievalCount = `COUNTIFS(${R.status},\"ok\",${R.experiment},\"system_retrieval\",${R.system},A${row},${R.mode},\"retrieval\")`;
-  const answerCount = `COUNTIFS(${R.status},\"ok\",${R.experiment},\"system_answer\",${R.system},A${row},${R.mode},\"answer\")`;
-  const retrievalArgs = `${R.status},\"ok\",${R.experiment},\"system_retrieval\",${R.system},A${row},${R.mode},\"retrieval\"`;
-  const answerArgs = `${R.status},\"ok\",${R.experiment},\"system_answer\",${R.system},A${row},${R.mode},\"answer\"`;
+  const retrievalCount = `COUNTIFS(${R.status},\"ok\",${R.active},1,${R.experiment},\"system_retrieval\",${R.system},A${row},${R.mode},\"retrieval\")`;
+  const answerCount = `COUNTIFS(${R.status},\"ok\",${R.active},1,${R.experiment},\"system_answer\",${R.system},A${row},${R.mode},\"answer\")`;
+  const retrievalArgs = `${R.status},\"ok\",${R.active},1,${R.experiment},\"system_retrieval\",${R.system},A${row},${R.mode},\"retrieval\"`;
+  const answerArgs = `${R.status},\"ok\",${R.active},1,${R.experiment},\"system_answer\",${R.system},A${row},${R.mode},\"answer\"`;
   const metricCount = (range, args) => `COUNTIFS(${range},\">=0\",${args})`;
   writeFormulaRow(systemSheet, row, {
     E: `=${retrievalCount}`,
     F: `=IF(${metricCount(R.hit, retrievalArgs)}=0,\"n.a.\",AVERAGEIFS(${R.hit},${retrievalArgs}))`,
     G: `=IF(${metricCount(R.mrr, retrievalArgs)}=0,\"n.a.\",AVERAGEIFS(${R.mrr},${retrievalArgs}))`,
-    H: `=IF(${retrievalCount}=0,\"n.a.\",SMALL(FILTER(${R.latency},(${R.status}=\"ok\")*(${R.experiment}=\"system_retrieval\")*(${R.system}=A${row})*(${R.mode}=\"retrieval\")),ROUNDUP(${retrievalCount}*0.95,0)))`,
+    H: directP95("R", (item) => !item.superseded && item.status === "ok" && item.experiment_id === "system_retrieval" && item.system_id === system.id && item.mode === "retrieval"),
     I: `=${answerCount}`,
-    J: directAverage("AL", (item) => item.status === "ok" && item.experiment_id === "system_answer" && item.system_id === system.id && item.mode === "answer"),
-    K: directAverage("AC", (item) => item.status === "ok" && item.experiment_id === "system_answer" && item.system_id === system.id && item.mode === "answer"),
+    J: directAverage("AL", (item) => !item.superseded && item.status === "ok" && item.experiment_id === "system_answer" && item.system_id === system.id && item.mode === "answer"),
+    K: directAverage("AC", (item) => !item.superseded && item.status === "ok" && item.experiment_id === "system_answer" && item.system_id === system.id && item.mode === "answer"),
   });
 });
 if (systems.length) {
@@ -223,24 +228,25 @@ const painDefinitions = [
   ...["auto_route", "all_kbs", "gold_kbs"].map((condition) => ({ experiment: "routing", condition, variant: "standard", label: `多库路由：${condition}` })),
   ...["vector_normal", "vector_disabled", "embedding_error"].map((condition) => ({ experiment: "failure_degradation", condition, variant: "standard", label: `向量降级：${condition}` })),
   ...["F0", "F1", "F2", "F3"].map((condition) => ({ experiment: "historical_multikb", condition, variant: "standard", label: `证据新鲜度：${condition}` })),
+  { experiment: "nashsu_no_vector_ablation", condition: "nashsu_token_graph", variant: "standard", label: "nashsu 消融：token + graph（未配置向量）" },
 ];
 const painRows = painDefinitions.map((item) => [item.experiment, item.condition, item.variant, item.label, null, null, null, null, null, null, null]);
 const painSheet = addDataSheet(
   "Pain Point Tests", "检索痛点量化实验",
   ["experiment_id","condition_id","query_variant","comparison","successful_runs","hit_at_5","mrr","irrelevant_evidence_rate","p95_latency_ms","abstention_score","stale_fact_error_rate"],
-  painRows, [20,22,14,35,16,14,12,24,18,18,22],
+  painRows, [28,22,14,35,16,14,12,24,18,18,22],
 );
 painDefinitions.forEach((item, index) => {
   const row = index + 5;
   const criteria = okCriteria([[R.experiment, item.experiment], [R.condition, item.condition], [R.variant, item.variant]]);
-  const matches = (run) => run.status === "ok"
+  const matches = (run) => !run.superseded && run.status === "ok"
     && run.experiment_id === item.experiment
     && run.condition_id === item.condition
     && run.query_variant === item.variant;
   writeFormulaRow(painSheet, row, {
     E: `=${countIfs(criteria)}`,
     F: averageIfs(R.hit, criteria), G: averageIfs(R.mrr, criteria), H: averageIfs(R.irrelevant, criteria),
-    I: p95Ifs(R.latency, criteria),
+    I: directP95("R", matches),
     J: directAverage("AH", matches),
     K: directAverage("AI", matches),
   });
@@ -248,6 +254,8 @@ painDefinitions.forEach((item, index) => {
 painSheet.getRange(`F5:H${painRows.length + 4}`).format.numberFormat = "0.0%";
 painSheet.getRange(`J5:K${painRows.length + 4}`).format.numberFormat = "0.0%";
 painSheet.getRange(`I5:I${painRows.length + 4}`).format.numberFormat = "0.0";
+painSheet.getRange(`A5:D${painRows.length + 4}`).format.wrapText = true;
+painSheet.getRange(`${painRows.length + 4}:${painRows.length + 4}`).format.rowHeight = 32;
 
 const skillDefinitions = [
   ["fast_q01", "fast", "Q01", "vector", 1, "单次检索"],
@@ -265,8 +273,8 @@ const skillSheet = addDataSheet(
 skillDefinitions.forEach((item, index) => {
   const row = index + 5;
   const criteria = okCriteria([[R.experiment, "skill_regression"], [R.condition, item[0]]]);
-  const allCriteria = [[R.experiment, "skill_regression"], [R.condition, item[0]]];
-  const matches = (run) => run.status === "ok" && run.experiment_id === "skill_regression" && run.condition_id === item[0];
+  const allCriteria = [[R.active, 1], [R.experiment, "skill_regression"], [R.condition, item[0]]];
+  const matches = (run) => !run.superseded && run.status === "ok" && run.experiment_id === "skill_regression" && run.condition_id === item[0];
   writeFormulaRow(skillSheet, row, {
     G: `=${countIfs(criteria)}`, H: directAverage("S", matches), I: directAverage("AH", matches),
     J: `=IF(${countIfs(allCriteria)}=0,\"n.a.\",IF(AND(${countIfs(criteria)}>0,_xlfn.MAXIFS(${R.calls},${R.experiment},\"skill_regression\",${R.condition},A${row})<=E${row}),\"通过\",\"需检查\"))`,
@@ -312,21 +320,22 @@ sourceSheet.showGridLines = false;
 [28,32,52,58,20,24,20,60].forEach((width, index) => sourceSheet.getRange(`${columnName(index)}:${columnName(index)}`).format.columnWidth = width);
 sourceSheet.getRange("A5:H200").format.font = { name: FONT, size: 10, color: COLORS.text };
 
-const failureHeaders = ["run_id","experiment_id","system_id","question_id","condition_id","status","degradation_detail","failure_detail","provenance_origin"];
-const failureRows = failures.map((row) => [row.run_id, row.experiment_id ?? row.experiment_group, row.system_id, row.question_id, row.condition_id, row.status, asText(row.degradation_detail ?? row.degradations), row.failure_detail, row.provenance_origin].map(asText));
-const failureSheet = addDataSheet("Failures", "失败与降级记录", failureHeaders, failureRows, [30,20,14,12,22,16,45,65,35], { freezeColumns: 3 });
-if (failureRows.length) failureSheet.getRange(`A5:I${failureRows.length + 4}`).format.fill = COLORS.paleRed;
+const failureHeaders = ["run_id","attempt_id","attempt","superseded","superseded_by","experiment_id","system_id","question_id","condition_id","status","degradation_detail","failure_detail","provenance_origin"];
+const failureRows = failures.map((row) => [row.run_id, row.attempt_id, row.attempt, row.superseded, row.superseded_by, row.experiment_id ?? row.experiment_group, row.system_id, row.question_id, row.condition_id, row.status, asText(row.degradation_detail ?? row.degradations), row.failure_detail, row.provenance_origin].map(asText));
+const failureSheet = addDataSheet("Failures", "失败与降级记录", failureHeaders, failureRows, [30,42,10,14,42,20,14,12,22,16,45,65,35], { freezeColumns: 3 });
+if (failureRows.length) failureSheet.getRange(`A5:M${failureRows.length + 4}`).format.fill = COLORS.paleRed;
 
 const summarySheet = workbook.worksheets.getItem("Summary");
 summarySheet.showGridLines = false;
 summarySheet.tabColor = COLORS.navy;
 styleTitle(summarySheet, "多知识库检索实验汇总", "Q");
-summarySheet.getRange("A5:B9").values = [
+summarySheet.getRange("A5:B10").values = [
   ["实验状态", rawRows.length ? "已载入真实运行" : "等待实验数据"], ["真实运行记录", rawRows.length],
-  ["失败/不可用记录", failures.length], ["系统数量", systems.length], ["问题数量", questions.length],
+  ["当前有效运行", activeRuns.length], ["已替代尝试", supersededRuns.length],
+  ["当前有效失败", activeFailures.length], ["系统 / 问题", `${systems.length} / ${questions.length}`],
 ];
-summarySheet.getRange("A5:A9").format = { fill: COLORS.paleBlue, font: { name: FONT, bold: true, color: COLORS.text } };
-summarySheet.getRange("B5:B9").format.font = { name: FONT, size: 11, color: COLORS.text };
+summarySheet.getRange("A5:A10").format = { fill: COLORS.paleBlue, font: { name: FONT, bold: true, color: COLORS.text } };
+summarySheet.getRange("B5:B10").format.font = { name: FONT, size: 11, color: COLORS.text };
 summarySheet.getRange("A12:F12").values = [["系统","Hit@5","MRR","可比检索 p95 (ms)","回答质量","Citation Recall"]];
 styleHeader(summarySheet.getRange("A12:F12"));
 systems.forEach((system, index) => {
@@ -380,10 +389,13 @@ summarySheet.getRange("A29:G29").formulas = [[
   '=IF(SUM(\'Skill Regression\'!G5:G9)=0,"n.a.","已检查")',
 ]];
 summarySheet.getRange("A29:G29").format = { fill: COLORS.paleGreen, font: { name: FONT, bold: true, color: COLORS.text }, horizontalAlignment: "center" };
-summarySheet.getRange("A32:B32").values = [["说明", "Mobilework 的 Query 向量在计时前生成；p95 仅含 Wiki 本地检索。远程端到端 p95 19,722 ms 仅作环境参考。"]];
+const mobileworkE2eP95 = percentile95(activeRuns.filter((row) => row.status === "ok" && row.system_id === "mobilework" && row.experiment_id === "system_retrieval_end_to_end").map((row) => row.latency_ms));
+const nashsuE2eP95 = percentile95(activeRuns.filter((row) => row.status === "ok" && row.system_id === "nashsu" && row.experiment_id === "system_retrieval_end_to_end").map((row) => row.latency_ms));
+summarySheet.getRange("A32:B32").values = [["说明", `主表为相同 OpenRouter 向量、相同 50 页 Wiki 的 network_excluded 本地检索。端到端 p95：Mobilework ${mobileworkE2eP95?.toFixed(1) ?? "n.a."} ms，nashsu ${nashsuE2eP95?.toFixed(1) ?? "n.a."} ms；两种口径严格分栏。`]];
+summarySheet.mergeCells("B32:G33");
 summarySheet.getRange("A32").format.font = { name: FONT, bold: true, color: COLORS.text };
-summarySheet.getRange("B32").format = { font: { name: FONT, italic: true, color: COLORS.muted }, wrapText: true, verticalAlignment: "top" };
-summarySheet.getRange("32:32").format.rowHeight = 60;
+summarySheet.getRange("B32:G33").format = { font: { name: FONT, italic: true, color: COLORS.muted }, wrapText: true, verticalAlignment: "top" };
+summarySheet.getRange("32:33").format.rowHeight = 28;
 [24,32,16,18,18,18,18,16,16,3,16,16,16,16,16,16,16].forEach((width, index) => summarySheet.getRange(`${columnName(index)}:${columnName(index)}`).format.columnWidth = width);
 
 for (const name of ["System Comparison", "Pain Point Tests", "Skill Regression"]) workbook.worksheets.getItem(name).tabColor = name === "System Comparison" ? COLORS.blue : COLORS.teal;
@@ -393,10 +405,10 @@ await fs.mkdir(previewDir, { recursive: true });
 const previewRanges = {
   Summary: "A1:Q34", "System Comparison": `A1:K${Math.max(8, systems.length + 4)}`,
   "Pain Point Tests": `A1:K${painRows.length + 4}`, "Skill Regression": "A1:J9",
-  "Raw Runs": `A1:AN${Math.min(Math.max(8, rawEnd), 25)}`,
+  "Raw Runs": `A1:AR${Math.min(Math.max(8, rawEnd), 25)}`,
   "Queries & Rubric": `A1:K${Math.min(Math.max(8, questionRows.length + 4), 20)}`,
   "Sources & Setup": `A1:H${Math.max(historyStart + historyRows.length + 2, 20)}`,
-  Failures: `A1:I${Math.min(Math.max(8, failureRows.length + 4), 25)}`,
+  Failures: `A1:M${Math.min(Math.max(8, failureRows.length + 4), 25)}`,
 };
 for (const [sheetName, range] of Object.entries(previewRanges)) {
   const preview = await workbook.render({ sheetName, range, scale: 1, format: "png" });

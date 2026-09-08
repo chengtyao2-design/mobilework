@@ -43,7 +43,7 @@ def test_manifest_has_all_agreed_experiment_subsets_and_deterministic_schedule()
     assert set(manifest["fuzzy_queries"]) == {"Q01", "Q03", "Q06", "Q07", "Q08", "Q19"}
     assert experiments["routing"]["question_ids"] == ["Q09", "Q12", "Q13", "Q15", "Q16", "Q17", "Q18", "Q19"]
     schedule = make_schedule(manifest)
-    assert len(schedule) == 108 + 36 + 144 + 72 + 18 + 5
+    assert len(schedule) == 108 + 72 + 36 + 144 + 72 + 18 + 5
     assert schedule == make_schedule(manifest)
     assert len({item.run_id for item in schedule}) == len(schedule)
 
@@ -113,7 +113,7 @@ def test_nashsu_adapter_parses_search_and_records_service_unavailable(tmp_path: 
 
     def request(path, payload):
         calls.append((path, payload))
-        return {"ok": True, "mode": "hybrid", "tokenHits": 2,
+        return {"ok": True, "mode": "hybrid", "tokenHits": 2, "vectorHits": 1,
                 "results": [{"path": "wiki/a.md", "title": "A", "snippet": "evidence", "score": .7}]}
 
     adapter = NashsuHttpAdapter("http://example.test", request_fn=request, repository_path=tmp_path)
@@ -125,6 +125,54 @@ def test_nashsu_adapter_parses_search_and_records_service_unavailable(tmp_path: 
 
     unavailable = NashsuHttpAdapter("http://example.test", request_fn=lambda *_: (_ for _ in ()).throw(URLError("offline")))
     assert unavailable.run("q", question, spec(system="nashsu"), 5).status == "unavailable"
+
+
+def test_nashsu_network_excluded_search_uses_shared_vector_and_requires_vector_hits(tmp_path: Path):
+    calls = []
+
+    def request(path, payload):
+        calls.append((path, payload))
+        return {"ok": True, "mode": "hybrid", "tokenHits": 1, "vectorHits": 2,
+                "graphHits": 1, "results": []}
+
+    question = multikb.load_questions()[0]
+    query = question["question"]
+    adapter = NashsuHttpAdapter("http://example.test", request_fn=request,
+        repository_path=tmp_path, latency_basis="network_excluded")
+    adapter.set_precomputed_embeddings({query: [0.1, 0.2]}, elapsed_ms=12.5,
+        query_latency_ms={query: 12.5}, metadata={"model": "qwen/qwen3-embedding-8b", "dimension": 2})
+    outcome = adapter.run(query, question, spec(system="nashsu"), 5)
+
+    assert outcome.status == "ok"
+    assert calls[0][1]["queryEmbedding"] == [0.1, 0.2]
+    assert outcome.metadata["vector_hits"] == 2
+    assert outcome.metadata["latency_basis"] == "network_excluded"
+    assert outcome.metadata["embedding_query_ms"] == 12.5
+
+    no_vector = NashsuHttpAdapter("http://example.test", repository_path=tmp_path,
+        request_fn=lambda *_: {"ok": True, "mode": "hybrid", "tokenHits": 3,
+                               "vectorHits": 0, "results": []})
+    failed = no_vector.run(query, question, spec(system="nashsu"), 5)
+    assert failed.status == "failed"
+    assert "vectorHits" in failed.failure_detail
+
+
+def test_nashsu_end_to_end_fetches_online_embedding_inside_adapter(tmp_path: Path):
+    calls = []
+    adapter = NashsuHttpAdapter(
+        "http://example.test",
+        repository_path=tmp_path,
+        online_embedding_fn=lambda query: ([0.2, 0.4], 7.5, {"model": "qwen/qwen3-embedding-8b"}),
+        request_fn=lambda path, payload: calls.append((path, payload)) or {
+            "ok": True, "mode": "hybrid", "tokenHits": 1, "vectorHits": 1, "results": [],
+        },
+    )
+    question = multikb.load_questions()[0]
+    outcome = adapter.run(question["question"], question, spec(system="nashsu"), 5)
+    assert outcome.status == "ok"
+    assert calls[0][1]["queryEmbedding"] == [0.2, 0.4]
+    assert outcome.metadata["embedding_query_ms"] == 7.5
+    assert outcome.metadata["latency_basis"] == "end_to_end"
 
 
 def test_opencode_parser_reads_tool_state_and_missing_karpathy_is_unavailable(tmp_path: Path):
@@ -166,6 +214,8 @@ def test_run_spec_and_aggregate_preserve_failed_rows_without_fake_metrics(tmp_pa
     row = run_spec(FakeAdapter(), question, spec(), question["question"], 5)
     assert row["status"] == "unavailable"
     assert row["provenance_label"] == "current_run"
+    assert row["attempt"] == 1
+    assert row["attempt_id"] == "run-1:a1"
     assert row["results"] == []
     aggregate = aggregate_runs([row])[0]
     assert aggregate["ok_count"] == 0

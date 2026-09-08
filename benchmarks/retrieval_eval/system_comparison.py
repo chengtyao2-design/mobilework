@@ -41,6 +41,55 @@ def utc_stamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def fetch_openrouter_query_embeddings(queries: Sequence[str]) -> tuple[dict[str, list[float]], dict[str, float], dict[str, Any]]:
+    """Fetch one shared query vector per unique query, independent of local-provider settings."""
+    from wiki_retrieval import embedding
+    embedding.load_dotenv(APP_ROOT)
+    endpoint = "https://openrouter.ai/api/v1/embeddings"
+    model = "qwen/qwen3-embedding-8b"
+    key = (os.environ.get("EMBEDDING_API_KEY") or os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    if not key:
+        raise RuntimeError("OpenRouter embedding key is unavailable")
+    vectors: dict[str, list[float]] = {}
+    latencies: dict[str, float] = {}
+    for query in dict.fromkeys(map(str, queries)):
+        payload = json.dumps({"model": model, "input": [query], "encoding_format": "float"},
+                             ensure_ascii=False).encode("utf-8")
+        last_error: Exception | None = None
+        for attempt in range(3):
+            started = time.perf_counter()
+            try:
+                req = urlrequest.Request(endpoint, data=payload, method="POST",
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+                with urlrequest.urlopen(req, timeout=120) as response:
+                    body = json.loads(response.read().decode("utf-8"))
+                vector = [float(value) for value in body["data"][0]["embedding"]]
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                if len(vector) != 4096 or not all(math.isfinite(value) for value in vector):
+                    raise RuntimeError(f"expected 4096 finite dimensions, got {len(vector)}")
+                vectors[query] = vector
+                latencies[query] = elapsed_ms
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(1 << attempt)
+        else:
+            raise RuntimeError(f"OpenRouter query embedding failed after 3 attempts: {type(last_error).__name__}: {last_error}")
+    ordered = sorted(latencies.values())
+    metadata = {"provider": "openrouter", "model": model, "endpoint": endpoint,
+        "dimension": 4096,
+        "query_latency_p50_ms": ordered[(len(ordered) - 1) // 2] if ordered else None,
+        "query_latency_p95_ms": ordered[max(0, math.ceil(.95 * len(ordered)) - 1)] if ordered else None}
+    return vectors, latencies, metadata
+
+
+def fetch_one_openrouter_query_embedding(query: str) -> tuple[list[float], float, dict[str, Any]]:
+    """Fetch a query vector inside an end-to-end timed adapter call."""
+    vectors, latencies, metadata = fetch_openrouter_query_embeddings([query])
+    return vectors[query], latencies[query], metadata
+
+
 def load_manifest(path: Path = DEFAULT_MANIFEST) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("schema_version") != 1:
@@ -243,7 +292,20 @@ class MobileworkAdapter:
         self.exclude_embedding_latency = exclude_embedding_latency
         self._precomputed_embeddings: dict[str, list[float]] = {}
         self._embedding_precompute_ms = 0.0
-        self._answer_unavailable_reason: str | None = None
+        self._embedding_query_ms: dict[str, float] = {}
+        self._embedding_metadata: dict[str, Any] = {}
+
+    def set_precomputed_embeddings(self, embeddings: Mapping[str, Sequence[float]], *,
+                                   elapsed_ms: float = 0.0,
+                                   query_latency_ms: Mapping[str, float] | None = None,
+                                   metadata: Mapping[str, Any] | None = None) -> None:
+        self._precomputed_embeddings = {
+            str(query): [float(value) for value in vector]
+            for query, vector in embeddings.items()
+        }
+        self._embedding_precompute_ms = float(elapsed_ms)
+        self._embedding_query_ms = {str(query): float(value) for query, value in (query_latency_ms or {}).items()}
+        self._embedding_metadata = dict(metadata or {})
 
     def precompute_embeddings(self, queries: Sequence[str]) -> None:
         if not self.exclude_embedding_latency:
@@ -251,13 +313,14 @@ class MobileworkAdapter:
         from wiki_retrieval import embedding
         unique = list(dict.fromkeys(str(query) for query in queries))
         vectors, elapsed_ms = embedding.fetch_batch(unique)
-        self._precomputed_embeddings = dict(zip(unique, vectors, strict=True))
-        self._embedding_precompute_ms = elapsed_ms
+        self.set_precomputed_embeddings(dict(zip(unique, vectors, strict=True)),
+            elapsed_ms=elapsed_ms, metadata={"provider": embedding.provider(),
+                "model": embedding.model_name(), "endpoint": embedding.endpoint(),
+                "preprocess": embedding.preprocess_id(),
+                "dimension": len(vectors[0]) if vectors else None})
 
     def run(self, query: str, question: Mapping[str, Any], spec: ComparisonSpec, top_k: int) -> AdapterOutcome:
         if spec.mode == "answer":
-            if self._answer_unavailable_reason:
-                return AdapterOutcome("unavailable", failure_detail=self._answer_unavailable_reason)
             profile = str(spec.condition.get("profile") or "balanced")
             executable = find_opencode()
             if executable is None:
@@ -276,7 +339,6 @@ class MobileworkAdapter:
                     timeout=self.answer_timeout, check=False)
                 if completed.returncode != 0:
                     detail = (completed.stderr or completed.stdout)[-2000:]
-                    self._answer_unavailable_reason = f"OpenCode preflight failed: {detail}"
                     return AdapterOutcome("failed", failure_detail=detail)
                 results, answer, citations, calls = parse_opencode_events(completed.stdout, top_k)
                 trace = mobilework_trace_metadata(completed.stdout, profile)
@@ -284,8 +346,8 @@ class MobileworkAdapter:
                     channels=sorted({channel for group in trace["actual_channels"] for channel in group}),
                     metadata=trace)
             except subprocess.TimeoutExpired:
-                self._answer_unavailable_reason = f"OpenCode process timed out after {self.answer_timeout} seconds"
-                return AdapterOutcome("failed", failure_detail=self._answer_unavailable_reason)
+                return AdapterOutcome("failed",
+                    failure_detail=f"OpenCode process timed out after {self.answer_timeout} seconds")
             except Exception as exc:
                 return AdapterOutcome("failed", failure_detail=f"{type(exc).__name__}: {exc}")
         if self._retrieve_fn is None:
@@ -342,6 +404,8 @@ class MobileworkAdapter:
                     "latency_basis": "network_excluded" if query in self._precomputed_embeddings else "end_to_end",
                     "retrieval_scope": self.retrieval_scope,
                     "embedding_precompute_batch_ms": self._embedding_precompute_ms if query in self._precomputed_embeddings else None,
+                    "embedding_query_ms": self._embedding_query_ms.get(query),
+                    "embedding": self._embedding_metadata if query in self._precomputed_embeddings else None,
                     "timings": response.get("timings"), "kb_status": response.get("kb_status")})
         except Exception as exc:
             return AdapterOutcome("failed", failure_detail=f"{type(exc).__name__}: {exc}", channels=channels)
@@ -354,13 +418,34 @@ class NashsuHttpAdapter:
 
     def __init__(self, base_url: str, project_id: str = "current", repository_path: Path | None = None,
                  request_fn: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
-                 corpus_wiki_pages: int | None = None):
+                 corpus_wiki_pages: int | None = None, *,
+                 latency_basis: str = "end_to_end", require_vector_hits: bool = True,
+                 online_embedding_fn: Callable[[str], tuple[list[float], float, dict[str, Any]]] | None = None):
         self.base_url = base_url.rstrip("/")
         self.project_id = project_id
         self.repository_path = repository_path
         self.commit = _git_commit(repository_path) if repository_path else "unknown"
         self.corpus_wiki_pages = corpus_wiki_pages
         self._request_fn = request_fn or self._post
+        self.latency_basis = latency_basis
+        self.require_vector_hits = require_vector_hits
+        self._online_embedding_fn = online_embedding_fn
+        self._precomputed_embeddings: dict[str, list[float]] = {}
+        self._embedding_precompute_ms = 0.0
+        self._embedding_query_ms: dict[str, float] = {}
+        self._embedding_metadata: dict[str, Any] = {}
+
+    def set_precomputed_embeddings(self, embeddings: Mapping[str, Sequence[float]], *,
+                                   elapsed_ms: float = 0.0,
+                                   query_latency_ms: Mapping[str, float] | None = None,
+                                   metadata: Mapping[str, Any] | None = None) -> None:
+        self._precomputed_embeddings = {
+            str(query): [float(value) for value in vector]
+            for query, vector in embeddings.items()
+        }
+        self._embedding_precompute_ms = float(elapsed_ms)
+        self._embedding_query_ms = {str(query): float(value) for query, value in (query_latency_ms or {}).items()}
+        self._embedding_metadata = dict(metadata or {})
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -381,7 +466,15 @@ class NashsuHttpAdapter:
         payload = ({"message": query, "topK": top_k, "includeContent": True,
                     "persistSession": False, "tools": {"wiki": True, "web": False, "anytxt": False}}
                    if spec.mode == "answer" else {"query": query, "topK": top_k, "includeContent": True})
+        if spec.mode == "retrieval" and query in self._precomputed_embeddings:
+            payload["queryEmbedding"] = self._precomputed_embeddings[query]
+        online_embedding_ms = None
+        online_embedding_metadata: dict[str, Any] | None = None
         try:
+            if (spec.mode == "retrieval" and "queryEmbedding" not in payload
+                    and self.latency_basis == "end_to_end" and self._online_embedding_fn is not None):
+                vector, online_embedding_ms, online_embedding_metadata = self._online_embedding_fn(query)
+                payload["queryEmbedding"] = vector
             response = self._request_fn(path, payload)
             if response.get("ok") is False:
                 raise RuntimeError(str(response.get("error") or "nashsu API rejected request"))
@@ -391,11 +484,29 @@ class NashsuHttpAdapter:
             answer = str(message.get("content", "")) if isinstance(message, dict) else str(message or "")
             citations = [_canonical_source(str(item.get("path", ""))) for item in response.get("references", [])]
             tool_events = response.get("toolEvents", [])
+            vector_hits = response.get("vectorHits")
+            if spec.mode == "retrieval" and self.require_vector_hits:
+                if not isinstance(vector_hits, int) or vector_hits <= 0:
+                    return AdapterOutcome("failed", results=results,
+                        channels=[str(response.get("mode", "native_hybrid"))],
+                        failure_detail="nashsu vector retrieval is required, but vectorHits was missing or zero",
+                        metadata={"token_hits": response.get("tokenHits"),
+                            "vector_hits": vector_hits, "graph_hits": response.get("graphHits"),
+                            "latency_basis": self.latency_basis,
+                            "embedding_precompute_batch_ms": self._embedding_precompute_ms
+                                if query in self._precomputed_embeddings else None,
+                            "embedding_query_ms": self._embedding_query_ms.get(query) or online_embedding_ms,
+                            "embedding": self._embedding_metadata or online_embedding_metadata})
             return AdapterOutcome("ok", results, answer, citations,
                 len([e for e in tool_events if e.get("status") in ("start", "started")]) or 1,
                 channels=[str(response.get("mode", "native_hybrid"))], metadata={
-                    "token_hits": response.get("tokenHits"), "vector_hits": response.get("vectorHits"),
-                    "graph_hits": response.get("graphHits")})
+                    "token_hits": response.get("tokenHits"), "vector_hits": vector_hits,
+                    "graph_hits": response.get("graphHits"),
+                    "latency_basis": self.latency_basis,
+                    "embedding_precompute_batch_ms": self._embedding_precompute_ms
+                        if query in self._precomputed_embeddings else None,
+                    "embedding_query_ms": self._embedding_query_ms.get(query) or online_embedding_ms,
+                    "embedding": self._embedding_metadata or online_embedding_metadata})
         except (urlerror.URLError, TimeoutError, ConnectionError) as exc:
             return AdapterOutcome("unavailable", failure_detail=f"{type(exc).__name__}: {exc}")
         except Exception as exc:
@@ -489,11 +600,8 @@ class KarpathyOpenCodeAdapter:
         self.corpus_wiki_pages = count_wiki_pages(self.repository_path)
         self._runner = runner or subprocess.run
         self.timeout = timeout
-        self._unavailable_reason: str | None = None
 
     def run(self, query: str, question: Mapping[str, Any], spec: ComparisonSpec, top_k: int) -> AdapterOutcome:
-        if self._unavailable_reason:
-            return AdapterOutcome("unavailable", failure_detail=self._unavailable_reason)
         if not self.repository_path.is_dir():
             return AdapterOutcome("unavailable", failure_detail=f"repository not found: {self.repository_path}")
         skill = self.repository_path / "SKILL.md"
@@ -510,23 +618,22 @@ class KarpathyOpenCodeAdapter:
                 env=env, capture_output=True, timeout=self.timeout, check=False)
             if completed.returncode != 0:
                 detail = (completed.stderr or completed.stdout)[-2000:]
-                self._unavailable_reason = f"OpenCode preflight failed: {detail}"
                 return AdapterOutcome("failed", failure_detail=detail)
             results, answer, citations, calls = parse_opencode_events(completed.stdout, top_k)
             return AdapterOutcome("ok", results, answer if spec.mode == "answer" else "",
                 citations if spec.mode == "answer" else [], calls)
         except FileNotFoundError as exc:
-            self._unavailable_reason = f"{type(exc).__name__}: {exc}"
-            return AdapterOutcome("unavailable", failure_detail=self._unavailable_reason)
+            return AdapterOutcome("unavailable", failure_detail=f"{type(exc).__name__}: {exc}")
         except subprocess.TimeoutExpired:
-            self._unavailable_reason = f"OpenCode process timed out after {self.timeout} seconds"
-            return AdapterOutcome("failed", failure_detail=self._unavailable_reason)
+            return AdapterOutcome("failed",
+                failure_detail=f"OpenCode process timed out after {self.timeout} seconds")
         except Exception as exc:
             return AdapterOutcome("failed", failure_detail=f"{type(exc).__name__}: {exc}")
 
 
 def run_spec(adapter: SystemAdapter, question: Mapping[str, Any], spec: ComparisonSpec,
-             query: str, top_k: int, provenance_label: str = "current_run") -> dict[str, Any]:
+             query: str, top_k: int, provenance_label: str = "current_run",
+             attempt: int = 1) -> dict[str, Any]:
     started_at, started = utc_stamp(), time.perf_counter()
     if adapter.corpus_wiki_pages != 50:
         detail = ("corpus page count is unknown; supply a verified count before comparison"
@@ -542,6 +649,8 @@ def run_spec(adapter: SystemAdapter, question: Mapping[str, Any], spec: Comparis
         "system_name": adapter.system_name, "system_commit": adapter.commit,
         "repository": adapter.repository, "provenance_label": provenance_label,
         "provenance_origin": spec.run_id, "query": query, "status": outcome.status,
+        "attempt": attempt, "attempt_id": f"{spec.run_id}:a{attempt}",
+        "superseded": False, "superseded_by": "",
         "started_at": started_at, "finished_at": utc_stamp(), "latency_ms": latency_ms,
         "tool_calls": outcome.tool_calls, "results": outcome.results, "answer": outcome.answer,
         "citations": outcome.citations, "queried_kb_ids": outcome.queried_kb_ids,
@@ -708,12 +817,17 @@ def apply_stale_fact_labels(records: Sequence[dict[str, Any]], label_path: Path)
 
 def default_adapters(root: Path, args: argparse.Namespace) -> dict[str, SystemAdapter]:
     baseline_root = Path(args.baseline_root).resolve()
+    latency_basis = getattr(args, "latency_basis", "end_to_end")
+    network_excluded = latency_basis == "network_excluded" or getattr(args, "mobilework_exclude_embedding_latency", False)
     return {
         "mobilework": MobileworkAdapter(root, model=args.model, answer_timeout=args.opencode_timeout,
             retrieval_scope=args.mobilework_scope,
-            exclude_embedding_latency=args.mobilework_exclude_embedding_latency),
+            exclude_embedding_latency=network_excluded),
         "nashsu": NashsuHttpAdapter(args.nashsu_url, args.nashsu_project,
-            baseline_root / "nashsu-llm-wiki", corpus_wiki_pages=args.nashsu_wiki_pages),
+            baseline_root / "nashsu-llm-wiki", corpus_wiki_pages=args.nashsu_wiki_pages,
+            latency_basis="network_excluded" if network_excluded else "end_to_end",
+            require_vector_hits=not getattr(args, "allow_nashsu_no_vector", False),
+            online_embedding_fn=None if network_excluded else fetch_one_openrouter_query_embedding),
         "karpathy": KarpathyOpenCodeAdapter(baseline_root / "karpathy-llm-wiki", model=args.model,
                                              timeout=args.opencode_timeout),
     }
@@ -742,11 +856,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--opencode-timeout", type=int, default=180)
     parser.add_argument("--mobilework-scope", choices=("wiki", "source", "both"), default="both")
     parser.add_argument("--mobilework-exclude-embedding-latency", action="store_true",
-        help="precompute query embeddings before timed runs and reuse them across knowledge bases")
+        help="deprecated alias for --latency-basis network_excluded")
+    parser.add_argument("--latency-basis", choices=("end_to_end", "network_excluded"),
+        default="end_to_end", help="whether timed retrieval includes remote query embedding")
+    parser.add_argument("--allow-nashsu-no-vector", action="store_true",
+        help="allow token/graph-only nashsu output; use only for the explicit no-vector ablation")
+    parser.add_argument("--attempts", type=int, default=1,
+        help="maximum independent attempts per logical run id")
+    parser.add_argument("--retry-delay-seconds", type=float, default=1.0)
     parser.add_argument("--import-historical", type=Path, action="append", default=[])
     parser.add_argument("--stale-labels", type=Path)
     parser.add_argument("--list", action="store_true", help="print the schedule without running adapters")
     args = parser.parse_args(argv)
+    if args.attempts < 1:
+        parser.error("--attempts must be at least 1")
+    if args.retry_delay_seconds < 0:
+        parser.error("--retry-delay-seconds must not be negative")
+    if args.mobilework_exclude_embedding_latency:
+        args.latency_basis = "network_excluded"
     manifest = load_manifest(args.manifest)
     schedule = make_schedule(manifest, args.experiments)
     if args.systems:
@@ -763,19 +890,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     fuzzy = manifest.get("fuzzy_queries", {})
     top_k = int(manifest["corpus"]["top_k"])
     mobilework = adapters.get("mobilework")
-    if isinstance(mobilework, MobileworkAdapter) and mobilework.exclude_embedding_latency:
+    nashsu = adapters.get("nashsu")
+    if args.latency_basis == "network_excluded":
         timed_queries = []
         for spec in schedule:
-            if spec.system_id != "mobilework" or spec.mode != "retrieval" or spec.condition.get("fault") == "embedding_error":
+            if spec.system_id not in ("mobilework", "nashsu") or spec.mode != "retrieval" or spec.condition.get("fault") == "embedding_error":
                 continue
             timed_queries.append(fuzzy.get(spec.question_id, questions[spec.question_id]["question"])
                 if spec.query_variant == "fuzzy" else questions[spec.question_id]["question"])
-        mobilework.precompute_embeddings(timed_queries)
+        vectors, query_latencies, embedding_metadata = fetch_openrouter_query_embeddings(timed_queries)
+        total_ms = sum(query_latencies.values())
+        if isinstance(mobilework, MobileworkAdapter):
+            mobilework.set_precomputed_embeddings(vectors, elapsed_ms=total_ms,
+                query_latency_ms=query_latencies, metadata=embedding_metadata)
+        if isinstance(nashsu, NashsuHttpAdapter):
+            nashsu.set_precomputed_embeddings(vectors, elapsed_ms=total_ms,
+                query_latency_ms=query_latencies, metadata=embedding_metadata)
     records = []
     for spec in schedule:
         query = fuzzy.get(spec.question_id, questions[spec.question_id]["question"]) if spec.query_variant == "fuzzy" else questions[spec.question_id]["question"]
-        records.append(run_spec(adapters[spec.system_id], questions[spec.question_id], spec, query, top_k))
-        print(f"completed {len(records)}/{len(schedule)}: {spec.run_id} ({records[-1]['status']})", flush=True)
+        for attempt in range(1, args.attempts + 1):
+            record = run_spec(adapters[spec.system_id], questions[spec.question_id], spec, query, top_k, attempt=attempt)
+            records.append(record)
+            print(f"completed {spec.run_id} attempt {attempt}/{args.attempts} ({record['status']})", flush=True)
+            if record["status"] == "ok":
+                break
+            if attempt < args.attempts and args.retry_delay_seconds:
+                time.sleep(args.retry_delay_seconds)
     historical_imports = []
     for historical in args.import_historical:
         imported = import_historical_path(historical)
