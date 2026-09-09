@@ -22,9 +22,9 @@ Classify the need as fact, explanation, comparison, relationship, provenance/ori
 
 ## Route and retrieve
 
-Call `route_knowledge_bases` with the original query and user-selected `kb_ids`, if any. Catalog routing does not consume a retrieval round. Then call unified `retrieve`, preserving the selected KB boundary, passing `retrieval_profile` as `profile` and the injected retrieval/budget values as overrides. Backend routing owns parallel KB search, fusion, and low-confidence or no-result fallback. Never expand beyond explicitly selected knowledge bases.
+For ordinary questions call unified `retrieve` directly. If the user selected knowledge bases, pass the complete `kb_ids` boundary; otherwise omit `kb_ids` and let `retrieve` perform catalog routing internally. Do not call `list_knowledge_bases` or `route_knowledge_bases` as a preflight step: use them only when the user explicitly asks to inspect available knowledge bases or debug routing. For one subquery, make exactly one `retrieve` call whose `kb_ids` array contains every selected knowledge base; never make one call per knowledge base because the backend already searches them in parallel and performs global fusion. The runtime injects `profile`, `channels`, and nested `overrides`; do not construct or pass those arguments yourself. Never expand beyond explicitly selected knowledge bases.
 
-Use only enabled channels. Request `top_k=5` and `include_content=true` for ordinary factual questions. Source verification requires `raw_evidence_fallback`; graph traversal requires `graph`; decomposition, sufficiency checks, and supplementary searches require their corresponding switches. Delegate rank fusion and freshness handling to the backend.
+Use only enabled channels. Request `top_k=5` and `include_content=true` for ordinary factual questions. Source verification requires `raw_evidence_fallback`; graph traversal requires `graph`; decomposition, sufficiency checks, and supplementary searches require their corresponding switches. In a multi-KB project, every `graph_neighbors` call must pass the `kb_id` from its seed retrieval hit; never pass a path-like seed without its knowledge-base boundary. Delegate rank fusion and freshness handling to the backend.
 
 After every call, inspect returned evidence text, identifiers, relationships, dates, and failure metadata. Mark each information need supported or unsupported. When supplementary retrieval is allowed, target only a remaining gap with a substantively different query, scope, or route.
 
@@ -36,7 +36,7 @@ Stop immediately when evidence is sufficient, a hard limit is reached, a round y
 
 ## Answer from evidence
 
-Answer the original question using human-readable document titles and KB provenance. Treat returned paths as citation identifiers, not workspace files; obtain prose only from returned evidence content. Do not invent pages, sources, relationships, or numerical effects.
+Every factual answer based on retrieved evidence must be traceable. Add bracketed citations such as `[1]` immediately after the sentence or bullet they support, and finish with a `参考证据` section mapping each number to the returned citation metadata: knowledge-base name, human-readable document titles, evidence type (Wiki 摘要 or 原始资料), and any available publisher, publication/update/effective date, derived-from title, and public source URL. Cite separate knowledge bases separately for cross-KB claims. If retrieval returned usable evidence, never omit this section; if metadata is absent, omit that field rather than inventing it. Treat returned paths as citation identifiers, not workspace files; obtain prose only from returned evidence content. Do not invent pages, sources, relationships, or numerical effects.
 
 Claim-to-chunk mapping is many-to-many. Use source dates, effective intervals, verification status, and supersedes/contradicts links. Missing dates are unknown; a newer publication alone does not invalidate earlier evidence. Pages derived from the same original document are not independent corroboration.
 

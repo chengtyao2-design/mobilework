@@ -1,7 +1,8 @@
 import { mkdir, rename, writeFile } from "node:fs/promises"
+import { appendFileSync, mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import type { TuiDialogStack, TuiPlugin } from "@opencode-ai/plugin/tui"
-import { readPreferences, resolveConfig, SWITCHES, SWITCH_LABELS, UNAVAILABLE_SWITCHES, FRESHNESS_LABELS } from "./retrieval-config.mjs"
+import { readPreferences, resolveConfig, responseWatchdogMs, SWITCHES, SWITCH_LABELS, UNAVAILABLE_SWITCHES, FRESHNESS_LABELS } from "./retrieval-config.mjs"
 
 type Tier = "fast" | "balanced" | "reasoning" | "research"
 type Preview = {
@@ -93,15 +94,31 @@ const mobileworkTui: TuiPlugin = async (api) => {
   let currentTier = readTier(root)
   const waitTimers = new Map<string, Array<ReturnType<typeof setTimeout>>>()
   const retrieved = new Set<string>()
+  const sessionStatuses = new Map<string, string>()
+
+  const logRuntime = (event: string, fields: Record<string, string> = {}) => {
+    try {
+      const directory = join(root, ".mobilework-state", "logs")
+      mkdirSync(directory, { recursive: true })
+      const details = Object.entries(fields).map(([key, value]) => `${key}=${value}`).join(" ")
+      appendFileSync(
+        join(directory, "retrieval.log"),
+        `${new Date().toISOString()} INFO mobilework.tui event=${event}${details ? ` ${details}` : ""}\n`,
+        "utf8",
+      )
+    } catch { /* Observability must never affect the TUI. */ }
+  }
 
   const clearWaitTimers = (sessionID: string) => {
     for (const timer of waitTimers.get(sessionID) ?? []) clearTimeout(timer)
     waitTimers.delete(sessionID)
   }
 
-  const watchLongResponse = (sessionID: string) => {
+  const watchLongResponse = (sessionID: string, timeoutOverride?: number) => {
     // One watchdog per busy period: repeated busy events must not postpone it.
     if (waitTimers.has(sessionID)) return
+    const config = resolveConfig(readPreferences(root))
+    const timeoutMs = timeoutOverride ?? responseWatchdogMs(config)
     waitTimers.set(sessionID, [
       setTimeout(() => api.ui.toast({
         title: "Mobilework",
@@ -111,12 +128,23 @@ const mobileworkTui: TuiPlugin = async (api) => {
       setTimeout(async () => {
         const hasEvidence = retrieved.has(sessionID)
         clearWaitTimers(sessionID)
-        try {
-          await api.client.session.abort({ sessionID, directory: root })
-        } catch (error) {
-          api.ui.toast({ title: "无法停止超时响应", message: String(error), variant: "error" })
-          return
-        }
+        logRuntime("watchdog_fired", { has_evidence: String(hasEvidence) })
+        const abortResult = Promise.race([
+          api.client.session.abort({ sessionID, directory: root })
+            .then(() => ({ ok: true as const }))
+            .catch((error) => ({ ok: false as const, error: String(error) })),
+          new Promise<{ ok: false; error: string }>((resolve) =>
+            setTimeout(() => resolve({ ok: false, error: "abort acknowledgement timed out after 5s" }), 5_000),
+          ),
+        ])
+        void abortResult.then((result) => {
+          logRuntime(result.ok ? "abort_completed" : "abort_failed")
+          if (!result.ok) api.ui.toast({
+            title: "停止请求未及时确认",
+            message: result.error,
+            variant: "error",
+          })
+        })
 
         const dialog = api.ui.dialog
         dialog.replace(() => api.ui.DialogConfirm({
@@ -126,6 +154,7 @@ const mobileworkTui: TuiPlugin = async (api) => {
           onConfirm: async () => {
             dialog.clear()
             try {
+              await abortResult
               await api.client.session.promptAsync({
                 sessionID,
                 directory: root,
@@ -141,33 +170,51 @@ const mobileworkTui: TuiPlugin = async (api) => {
             }
           },
         }))
-      }, 45_000),
+      }, timeoutMs),
     ])
   }
 
   const stopStatusWatch = api.event.on("session.status", (event) => {
-    if (["busy", "retry"].includes(event.properties.status.type)) watchLongResponse(event.properties.sessionID)
-    else { clearWaitTimers(event.properties.sessionID); retrieved.delete(event.properties.sessionID) }
+    const sessionID = event.properties.sessionID
+    const status = event.properties.status.type
+    if (sessionStatuses.get(sessionID) !== status) {
+      sessionStatuses.set(sessionID, status)
+      logRuntime("session_status", { status })
+    }
+    // A new/retrying provider request has not entered retrieval yet. Keep this
+    // bounded at 45s; the longer profile-specific window starts only after a
+    // retrieval tool is visibly running.
+    if (["busy", "retry"].includes(status)) watchLongResponse(sessionID, 45_000)
+    else { clearWaitTimers(sessionID); retrieved.delete(sessionID) }
   })
   const stopIdleWatch = api.event.on("session.idle", (event) => {
+    logRuntime("session_idle")
     clearWaitTimers(event.properties.sessionID)
   })
   const stopErrorWatch = api.event.on("session.error", (event) => {
+    logRuntime("session_error")
     if (event.properties.sessionID) clearWaitTimers(event.properties.sessionID)
   })
   const stopPartWatch = api.event.on("message.part.updated", (event) => {
     const { part } = event.properties
     const sessionID = part.sessionID ?? event.properties.sessionID
     if (!waitTimers.has(sessionID)) return
+    const toolFinished = part.type === "tool" && ["completed", "error"].includes(part.state.status)
+    if (part.type === "tool") logRuntime("tool_state", {
+      tool: String(part.tool).replace(/[^a-zA-Z0-9_-]/g, ""),
+      status: String(part.state.status),
+    })
     if (part.type === "tool" && part.state.status === "completed" && /(?:^|_)retrieve$/.test(part.tool)) retrieved.add(sessionID)
     clearWaitTimers(sessionID)
-    watchLongResponse(sessionID)
+    // A finished tool only needs answer-generation grace; applying the full
+    // Research retrieval window here makes post-error stalls unnecessarily long.
+    watchLongResponse(sessionID, toolFinished ? 45_000 : undefined)
   })
   const stopDeltaWatch = api.event.on("message.part.delta", (event) => {
     const { sessionID, delta } = event.properties
     if (!delta || !waitTimers.has(sessionID)) return
     clearWaitTimers(sessionID)
-    watchLongResponse(sessionID)
+    watchLongResponse(sessionID, 45_000)
   })
 
   if (!api.command) {

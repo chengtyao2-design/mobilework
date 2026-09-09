@@ -18,6 +18,7 @@ from urllib.parse import urljoin
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "qwen/qwen3-embedding-8b"
+DEFAULT_PROVIDER = "openrouter"
 
 _TIMEOUT_SECONDS = 180.0
 _MAX_ATTEMPTS = 3
@@ -68,8 +69,27 @@ def base_url() -> str:
     return _setting("EMBEDDING_BASE_URL", DEFAULT_BASE_URL)
 
 
+def provider() -> str:
+    value = _setting("EMBEDDING_PROVIDER", DEFAULT_PROVIDER).lower()
+    if value not in {"openrouter", "local"}:
+        raise RuntimeError(f"unsupported EMBEDDING_PROVIDER: {value}")
+    return value
+
+
 def model_name() -> str:
+    if provider() == "local":
+        from . import local_embedding
+
+        return local_embedding.runtime_name()
     return _setting("EMBEDDING_MODEL", DEFAULT_MODEL)
+
+
+def preprocess_id() -> str:
+    if provider() == "local":
+        from . import local_embedding
+
+        return local_embedding.preprocess_id()
+    return "remote-raw-v1"
 
 
 def endpoint() -> str:
@@ -95,7 +115,16 @@ def _api_key() -> str:
 
 def has_api_key() -> bool:
     """Lets the vector channel report `disabled` instead of attempting a call."""
+    if provider() == "local":
+        from . import local_embedding
+
+        return local_embedding.available()
     return any((os.environ.get(name) or "").strip() for name in _KEY_VARIABLES)
+
+
+def available() -> bool:
+    """Whether the configured backend can run without making a probe request."""
+    return has_api_key()
 
 
 def _optional_headers() -> dict[str, str]:
@@ -135,11 +164,17 @@ def _parse_vectors(body: Any, expected: int) -> list[list[float]]:
     return [vector for _, vector in indexed]
 
 
-def fetch_batch(texts: list[str]) -> tuple[list[list[float]], float]:
+def fetch_batch(texts: list[str], *, query: bool = False) -> tuple[list[list[float]], float]:
     import httpx
 
     if not texts:
         return [], 0.0
+    if provider() == "local":
+        from . import local_embedding
+
+        start = time.perf_counter()
+        vectors = local_embedding.encode(texts, query=query)
+        return vectors, (time.perf_counter() - start) * 1000.0
     url = endpoint()
     payload = {"model": model_name(), "input": list(texts), "encoding_format": "float"}
     key = _api_key()
@@ -179,7 +214,7 @@ def fetch_batch(texts: list[str]) -> tuple[list[list[float]], float]:
 
 
 def fetch(text: str) -> tuple[list[float], float]:
-    vectors, elapsed_ms = fetch_batch([text])
+    vectors, elapsed_ms = fetch_batch([text], query=True)
     return vectors[0], elapsed_ms
 
 

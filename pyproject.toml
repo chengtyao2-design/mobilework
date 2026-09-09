@@ -9,6 +9,9 @@ dependencies = [
     "lancedb",
     "pyarrow",
     "httpx",
+    "numpy",
+    "onnxruntime>=1.20,<2",
+    "transformers>=4.48,<5",
 ]
 
 [project.optional-dependencies]

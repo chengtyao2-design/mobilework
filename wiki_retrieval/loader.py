@@ -9,6 +9,7 @@ query that simply matches nothing is an ordinary empty result.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from dataclasses import dataclass, field
@@ -241,6 +242,18 @@ def result_stub(doc: Doc, include_content: bool = False, anchor: str = "") -> di
     }
     if doc.scope == "source":
         stub["source_metadata"] = source_metadata(doc.content)
+    else:
+        from .textutil import frontmatter_value
+        raw_sources = frontmatter_value(doc.content, "sources")
+        if raw_sources:
+            try:
+                sources = json.loads(raw_sources)
+            except (TypeError, ValueError):
+                sources = [raw_sources]
+            if isinstance(sources, list):
+                stub["source_titles"] = [
+                    Path(str(source)).stem for source in sources if str(source).strip()
+                ]
     return stub
 
 

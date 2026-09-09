@@ -30,10 +30,13 @@ from .core import (
 from .project import KnowledgeBaseError, resolve_kb_root
 
 WIKI_CATEGORIES = ("concepts", "entities", "references", "skills", "sources", "synthesis")
-EMBEDDING_KEYS = ("EMBEDDING_BASE_URL", "EMBEDDING_API_KEY", "EMBEDDING_MODEL")
+EMBEDDING_KEYS = (
+    "EMBEDDING_PROVIDER", "EMBEDDING_LOCAL_MODEL_PATH", "EMBEDDING_LOCAL_VARIANT",
+    "EMBEDDING_LOCAL_THREADS", "EMBEDDING_BASE_URL", "EMBEDDING_API_KEY", "EMBEDDING_MODEL",
+)
 DEFAULT_EMBEDDING_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
-RUNTIME_MODULES = ("mcp", "lancedb", "pyarrow", "httpx")
+RUNTIME_MODULES = ("mcp", "lancedb", "pyarrow", "httpx", "numpy", "onnxruntime", "transformers")
 
 
 def emit(value: Any) -> None:
@@ -245,6 +248,13 @@ def _check_dependencies() -> dict[str, str]:
 def _check_embedding_env(root: Path, values: dict[str, str], env_exists: bool) -> dict[str, str]:
     if not env_exists:
         return _check("embedding_env", "warn", f"缺少 {root / '.env'}")
+    if (values["EMBEDDING_PROVIDER"] or "openrouter").lower() == "local":
+        from wiki_retrieval import embedding
+
+        embedding.load_dotenv(root)
+        if not embedding.available():
+            return _check("embedding_env", "fail", "本地 embedding 模型文件缺失")
+        return _check("embedding_env", "ok", f"provider=local model={embedding.model_name()}")
     if not values["EMBEDDING_API_KEY"]:
         return _check("embedding_env", "warn", "未配置：EMBEDDING_API_KEY（向量通道将禁用）")
     model = values["EMBEDDING_MODEL"] or DEFAULT_EMBEDDING_MODEL
@@ -359,7 +369,19 @@ def _check_index_freshness(root: Path) -> dict[str, str]:
     return _check("index_freshness", "warn" if stale else "ok", json.dumps(payload, ensure_ascii=False, default=str))
 
 
-def _check_embedding_probe(values: dict[str, str]) -> dict[str, str]:
+def _check_embedding_probe(root: Path, values: dict[str, str]) -> dict[str, str]:
+    if (values["EMBEDDING_PROVIDER"] or "openrouter").lower() == "local":
+        try:
+            from wiki_retrieval import embedding
+
+            embedding.load_dotenv(root)
+            vector, elapsed_ms = embedding.fetch("wiki doctor probe")
+        except Exception as error:
+            return _check("embedding_probe", "fail", f"本地推理失败：{type(error).__name__}: {error}")
+        return _check(
+            "embedding_probe", "ok",
+            f"provider=local model={embedding.model_name()} dimension={len(vector)} elapsed_ms={elapsed_ms:.1f}",
+        )
     base_url = values["EMBEDDING_BASE_URL"] or DEFAULT_EMBEDDING_BASE_URL
     api_key = values["EMBEDDING_API_KEY"]
     model = values["EMBEDDING_MODEL"] or DEFAULT_EMBEDDING_MODEL
@@ -404,7 +426,7 @@ def doctor(root: Path, probe: bool = False, env_root: Path | None = None) -> dic
         checks.append(_check_batch_residue(root))
     checks.append(_check_index_freshness(root))
     if probe:
-        checks.append(_check_embedding_probe(env_values))
+        checks.append(_check_embedding_probe(env_root, env_values))
     states = {item["status"] for item in checks}
     overall = "fail" if "fail" in states else "warn" if "warn" in states else "ok"
     return {"status": overall, "root": str(root), "checks": checks}

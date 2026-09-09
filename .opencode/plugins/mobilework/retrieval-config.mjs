@@ -40,6 +40,15 @@ export function resolveConfig(saved = {}, request = {}) {
   for (const key of UNAVAILABLE_SWITCHES) result.retrieval[key] = false
   return result
 }
+
+// A running retrieval tool is silent until it returns. Advanced profiles need
+// their full retrieval deadline plus time for the model to compose an answer,
+// otherwise the TUI watchdog can abort valid work before the configured budget.
+export function responseWatchdogMs(config) {
+  const baseline = 45_000
+  if (!['reasoning', 'research'].includes(config.retrieval_profile)) return baseline
+  return Math.max(baseline, config.budget.deadline_ms + 45_000)
+}
 // A round is one retrieval/tool request; catalog routing is metadata, not a round.
 export class RetrievalGuard {
   constructor(config, now = Date.now()) { this.config = config; this.started = now; this.calls = 0; this.queries = new Set(); this.evidence = new Set(); this.reason = null }

@@ -26,6 +26,7 @@ ALPHA = """---
 title: "阿尔法概念"
 category: "concepts"
 type: "concept"
+sources: ["raw/sources/src-alpha.md"]
 ---
 
 # UNIQUEHEADING
@@ -533,6 +534,10 @@ class TestKnowledgeTree:
         tree = server.catalog(corpus_root)
         concepts = next(g for g in tree["wiki"] if g["category"] == "concepts")
         assert concepts["pages"][0]["page_type"] == "concept"
+
+    def test_wiki_result_exposes_human_readable_source_titles(self, corpus_root: Path):
+        payload = retrieve("zzneedle", channels=["keyword"], root=corpus_root)
+        assert payload["results"][0]["source_titles"] == ["src-alpha"]
 
 
 class TestServerSurface:

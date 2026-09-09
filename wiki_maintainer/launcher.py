@@ -27,7 +27,7 @@ DEFAULT_MODELS = {
     "primary": "openrouter/qwen/qwen3.8-max",
     "small": "openrouter/qwen/qwen3.7-flash",
 }
-PROVIDER_TIMEOUT_MS = 90_000
+PROVIDER_TIMEOUT_MS = 60_000
 PROVIDER_CHUNK_TIMEOUT_MS = 45_000
 
 

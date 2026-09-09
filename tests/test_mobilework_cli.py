@@ -129,7 +129,7 @@ def test_runtime_config_registers_references_and_tui_compatibility(tmp_path: Pat
     assert runtime["small_model"] == "openrouter/qwen/qwen3.7-flash"
     assert runtime["enabled_providers"] == ["openrouter"]
     assert runtime["provider"]["openrouter"]["options"] == {
-        "timeout": 90_000,
+        "timeout": 60_000,
         "chunkTimeout": 45_000,
     }
     assert runtime["tool_output"] == {"max_lines": 400, "max_bytes": 16000}
@@ -268,7 +268,8 @@ def test_plugin_autoload_order_and_tier_boundaries(repo_root: Path) -> None:
     assert "promptAsync" in tui
     assert "opencode run" not in tui
     assert 'api.event.on("session.status"' in tui
-    assert "45_000" in tui
+    assert "responseWatchdogMs(config)" in tui
+    assert "45_000" in (repo_root / ".opencode/plugins/mobilework/retrieval-config.mjs").read_text(encoding="utf-8")
     assert "15_000" in tui
     assert "if (waitTimers.has(sessionID)) return" in tui
     assert "api.client.session.abort" in tui
@@ -294,6 +295,8 @@ def test_skill_tier_limits_and_planner_contract(repo_root: Path) -> None:
     assert "max_tool_calls" in unified
     assert "duplicate:true" in unified
     assert "human-readable document titles" in unified
+    assert "never omit this section" in unified
+    assert "every `graph_neighbors` call must pass the `kb_id`" in unified
     assert "Do not mention the profile" in unified
     assert "independent corroboration" in unified
     assert "max_tool_calls: 1" in profiles["fast"]
@@ -321,3 +324,4 @@ def test_primary_agent_blocks_conflicting_system_capabilities(repo_root: Path) -
     assert "webfetch: deny" in agent
     assert "websearch: deny" in agent
     assert "不得调用系统级 Skill" in agent
+    assert "参考证据" in agent

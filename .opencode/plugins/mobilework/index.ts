@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
 import { readPreferences, resolveConfig, RetrievalGuard } from "./retrieval-config.mjs"
@@ -34,6 +34,18 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
   const nonMobileworkSessions = new Set<string>()
   const guards = new Map<string, RetrievalGuard>()
   const requests = new Map<string, any>()
+
+  const logGuardStop = (reason: string, kind: string, args: any) => {
+    try {
+      const directory = join(root, ".mobilework-state", "logs")
+      mkdirSync(directory, { recursive: true })
+      appendFileSync(
+        join(directory, "retrieval.log"),
+        `${new Date().toISOString()} WARN mobilework.plugin event=guard_stopped reason=${reason} tool=${kind} kb_count=${Array.isArray(args?.kb_ids) ? args.kb_ids.length : 0} scope=${String(args?.scope ?? "wiki")}\n`,
+        "utf8",
+      )
+    } catch { /* Observability must never break retrieval. */ }
+  }
 
   const load = (relativePath: string): string => {
     const cached = skillCache.get(relativePath)
@@ -87,7 +99,7 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
       const config = resolveConfig(readPreferences(root), requests.get(input.sessionID ?? "") ?? {})
       const profileReference = `references/profiles/${config.retrieval_profile}.md`
       output.system.push(
-        `Mobilework retrieval configuration for THIS TURN is ${JSON.stringify(config)}. Never change or silently escalate it. This value overrides historical settings. Pass retrieval_profile as profile and retrieval/budget as overrides to retrieve. Managed skills are already loaded; never call skill to replace them. Keep plans, tool names, parameters, and internal IDs out of user-facing prose.`,
+        `Mobilework retrieval configuration for THIS TURN is ${JSON.stringify(config)}. Never change or silently escalate it. This value overrides historical settings. For an ordinary knowledge-base question call retrieve directly; it performs routing internally, so do not preflight with list_knowledge_bases or route_knowledge_bases. The runtime injects profile, channels, and overrides into retrieve; do not construct or pass those arguments yourself. Every factual answer with usable retrieved evidence must include inline [n] citations and a final 参考证据 mapping based on returned citation metadata. Managed skills are already loaded; never call skill to replace them. Keep plans, tool names, parameters, and internal IDs out of user-facing prose.`,
         `\n<mobilework-skill name="wiki-retrieval">\n${load("SKILL.md")}\n</mobilework-skill>`,
         `\n<mobilework-profile name="${config.retrieval_profile}">\n${load(profileReference)}\n</mobilework-profile>`,
       )
@@ -95,12 +107,20 @@ const MobileworkPlugin: Plugin = async ({ directory }) => {
     "tool.execute.before": async (input, output) => {
       const kind = retrievalToolKind(input.tool)
       if (kind && !nonMobileworkSessions.has(input.sessionID) && !syncSessions.has(input.sessionID)) {
+        output.title = FRIENDLY_TOOL_TITLES[kind]
         if (!["route_knowledge_bases", "list_knowledge_bases"].includes(kind)) {
           const config = resolveConfig(readPreferences(root), requests.get(input.sessionID) ?? {})
           let guard = guards.get(input.sessionID)
           if (!guard) { guard = new RetrievalGuard(config); guards.set(input.sessionID, guard) }
-          const stop = guard.before(`${kind}:${output.args?.query ?? JSON.stringify(output.args)}`)
-          if (stop) throw new Error(`Retrieval stopped: ${stop}; answer using existing evidence and disclose gaps`)
+          const kbBoundary = kind === "retrieve"
+            ? [...(output.args?.kb_ids ?? [])].map(String).sort().join(",")
+            : ""
+          const scopeBoundary = kind === "retrieve" ? String(output.args?.scope ?? "wiki") : ""
+          const stop = guard.before(`${kind}:${output.args?.query ?? JSON.stringify(output.args)}:kb=${kbBoundary}:scope=${scopeBoundary}`)
+          if (stop) {
+            logGuardStop(stop, kind, output.args)
+            throw new Error(`Retrieval stopped: ${stop}; answer using existing evidence and disclose gaps`)
+          }
           if (kind === "retrieve") {
             output.args.profile = config.retrieval_profile
             output.args.channels = ["vector", "keyword", "graph"].filter(key => config.retrieval[key])

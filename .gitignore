@@ -17,12 +17,16 @@ pnpm-debug.log*
 .wiki-state/
 .wiki-trash/
 .mobilework-state/
+.mobilework-state/logs/
 kb/*/.wiki-state/
 kb/*/.wiki-trash/
 
 # 向量库落盘目录
 .lancedb/
 kb/*/.lancedb/
+
+# 本地 embedding 权重（由 setup/probe 下载，不提交二进制模型）
+.mobilework-models/
 
 # 本地配置，从 *.example 复制
 .env
@@ -46,3 +50,37 @@ kb/*/wiki/**/*.md
 
 # 检索评测每轮的运行产物（合成语料、jsonl、stderr 转储），体积大且可由 harness 复现
 benchmarks/retrieval_eval/artifacts/
+
+# 临时工作区、导出文件与 Office 锁文件
+tmp/
+output/
+~$*
+*.tmp
+*.temp
+*.bak
+
+# 本地工具、测试与覆盖率缓存
+.opencode/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Python 打包与通用构建产物
+build/
+dist/
+
+# 本地编辑器与操作系统元数据
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+
+# 报告/演示文稿的中间网页，可由源文件重新生成
+docs/LLM_WIKI_RETRIEVAL_TECHNICAL_REPORT.html
+docs/report-deck-optimized.html

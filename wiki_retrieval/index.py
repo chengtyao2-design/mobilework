@@ -68,12 +68,15 @@ def freshness(root: Path) -> dict:
     }
     strategy_stale = meta.get("chunking_strategy") != CHUNKING_STRATEGY
     parameters_stale = meta.get("chunking_parameters") != expected_parameters
-    stale = stale or strategy_stale or parameters_stale
+    model_stale = meta.get("model") != embedding.model_name()
+    preprocess_stale = meta.get("embedding_preprocess") != embedding.preprocess_id()
+    stale = stale or strategy_stale or parameters_stale or model_stale or preprocess_stale
     payload = {
         "exists": True,
         "stale_index": stale,
         "index_built_at": meta.get("index_built_at"),
         "model": meta.get("model"),
+        "embedding_preprocess": meta.get("embedding_preprocess"),
         "dim": meta.get("dim"),
         "rows": meta.get("rows"),
         "wiki_pages": meta.get("wiki_pages"),
@@ -88,6 +91,10 @@ def freshness(root: Path) -> dict:
             reasons.append("chunking strategy changed")
         if parameters_stale:
             reasons.append("chunking parameters changed")
+        if model_stale:
+            reasons.append("embedding model changed")
+        if preprocess_stale:
+            reasons.append("embedding preprocessing changed")
         if corpus_max_mtime > built_mtime:
             reasons.append("wiki pages changed after the index was built")
         payload["reason"] = "; ".join(reasons)
@@ -117,6 +124,7 @@ def write_meta(root: Path, dim: int, rows: int, wiki_pages: int | None = None) -
     meta = {
         "index_built_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "model": embedding.model_name(),
+        "embedding_preprocess": embedding.preprocess_id(),
         "dim": dim,
         "rows": rows,
         "wiki_pages": wiki_pages if wiki_pages is not None else len(loader.load_corpus(root).wiki_docs),
@@ -151,8 +159,8 @@ def build(
     rows = _rows(root, limit)
     if not rows:
         raise loader.CorpusEmptyError(f"no wiki pages found under {root / loader.WIKI_DIR}")
-    if not embedding.has_api_key():
-        raise RuntimeError("EMBEDDING_API_KEY is not set; indexing needs a live endpoint")
+    if not embedding.available():
+        raise RuntimeError("configured embedding backend is not available")
 
     batch_size = max(1, int(batch))
     vectors: list[list[float]] = []

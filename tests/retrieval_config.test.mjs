@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveConfig, RetrievalGuard, PROFILE_NAMES } from '../.opencode/plugins/mobilework/retrieval-config.mjs'
+import { resolveConfig, responseWatchdogMs, RetrievalGuard, PROFILE_NAMES } from '../.opencode/plugins/mobilework/retrieval-config.mjs'
 import MobileworkPlugin from '../.opencode/plugins/mobilework/index.ts'
 import { fileURLToPath } from 'node:url'
 
@@ -20,6 +20,13 @@ test('request wins over saved overrides over profile; validate values', () => {
   assert.equal(resolveConfig({retrieval_tier: 'high'}).retrieval_profile, 'research')
   assert.equal(resolveConfig({}, {retrieval_tier: 'naive'}).retrieval_profile, 'fast')
   assert.equal(resolveConfig({retrieval_profile:'nonsense'}).retrieval_profile, 'balanced')
+})
+test('advanced profiles allow retrieval budget plus answer grace before watchdog abort', () => {
+  assert.equal(responseWatchdogMs(resolveConfig({retrieval_profile:'fast'})), 45_000)
+  assert.equal(responseWatchdogMs(resolveConfig({retrieval_profile:'balanced'})), 45_000)
+  assert.equal(responseWatchdogMs(resolveConfig({retrieval_profile:'reasoning'})), 75_000)
+  assert.equal(responseWatchdogMs(resolveConfig({retrieval_profile:'research'})), 135_000)
+  assert.equal(responseWatchdogMs(resolveConfig({retrieval_profile:'research', budget:{deadline_ms:120_000}})), 165_000)
 })
 test('guard deadline, call limit, normalization, evidence and backend semantic duplication', () => {
   const config = resolveConfig({retrieval_profile:'research'})
@@ -44,12 +51,17 @@ test('plugin injects current config and enforces unified calls without widening 
   assert.ok(system.system.join('\n').includes('<mobilework-skill name="wiki-retrieval">'))
   assert.ok(system.system.join('\n').includes('<mobilework-profile name="research">'))
   assert.ok(system.system.join('\n').includes('max_tool_calls: 8'))
+  assert.ok(system.system.join('\n').includes('do not preflight with list_knowledge_bases or route_knowledge_bases'))
+  assert.ok(system.system.join('\n').includes('do not construct or pass those arguments yourself'))
   assert.ok(!system.system.join('\n').includes('<mobilework-profile name="fast">'))
   const output = {args:{query:'query',kb_ids:['kb_a']}}
   await hooks['tool.execute.before']({sessionID:'test',tool:'wiki_retrieve'}, output)
   assert.deepEqual(output.args.kb_ids, ['kb_a']); assert.equal(output.args.profile, 'research'); assert.equal(output.args.overrides.retrieval.graph,false)
   assert.deepEqual(output.args.channels, ['vector', 'keyword'])
-  await assert.rejects(() => hooks['tool.execute.before']({sessionID:'test',tool:'wiki_retrieve'}, {args:{query:'Query?'}}), /duplicate_query/)
+  const otherKb = {args:{query:'Query?',kb_ids:['kb_b']}}
+  await hooks['tool.execute.before']({sessionID:'test',tool:'wiki_retrieve'}, otherKb)
+  assert.deepEqual(otherKb.args.kb_ids, ['kb_b'])
+  await assert.rejects(() => hooks['tool.execute.before']({sessionID:'test',tool:'wiki_retrieve'}, {args:{query:'Query?',kb_ids:['kb_b']}}), /duplicate_query/)
 })
 
 test('all profiles bound model generation independently of retrieval budget', async () => {

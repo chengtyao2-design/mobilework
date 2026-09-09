@@ -33,8 +33,8 @@ def run(
     """Returns (run, embedding status). The run is None whenever the channel could
     not produce anything, which keeps the other channels' output untouched."""
     status: dict = {"status": "disabled", "model": embedding.model_name(), "elapsed_ms": 0.0}
-    if not embedding.has_api_key():
-        status["error"] = "EMBEDDING_API_KEY is not set; vector channel skipped"
+    if not embedding.available():
+        status["error"] = "configured embedding backend is unavailable; vector channel skipped"
         return None, status
 
     started = time.perf_counter()

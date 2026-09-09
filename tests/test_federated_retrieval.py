@@ -1,4 +1,5 @@
 import json
+import logging
 import threading
 from unittest.mock import patch
 
@@ -132,6 +133,19 @@ def test_kb_queries_run_concurrently(project):
         result = federated.retrieve(project, "common", channels=["keyword"])
     assert result["errors"] == {}
     assert result["queried_kb_ids"] == ["a", "b"]
+
+
+def test_federated_retrieval_emits_compact_lifecycle_logs(project, caplog):
+    with caplog.at_level(logging.INFO, logger="wiki_retrieval.federated"):
+        result = federated.retrieve(project, "common", channels=["keyword"])
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "event=retrieval_started" in messages
+    assert "event=retrieval_routed" in messages
+    assert messages.count("event=kb_started") == 2
+    assert messages.count("event=kb_completed") == 2
+    assert "event=retrieval_completed" in messages
+    assert f"result_count={len(result['results'])}" in messages
+    assert "common" not in messages
 
 
 def test_claim_many_to_many_and_context(project):

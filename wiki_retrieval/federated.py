@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
+import hashlib
 import json
+import logging
 import math
 from pathlib import Path
 import re
@@ -11,6 +13,9 @@ import time
 
 from . import embedding
 from .textutil import expand_conversational_query
+
+
+logger = logging.getLogger("wiki_retrieval.federated")
 
 
 def registry(root: Path) -> dict[str, dict]:
@@ -79,6 +84,7 @@ def retrieve(root: Path, query: str, kb_ids: list[str] | None = None,
     from .retrieve import retrieve as local_retrieve, _bound_evidence
     from .claims import enrich
     started = time.perf_counter()
+    retrieval_id = hashlib.sha256(f"{time.time_ns()}:{query}".encode("utf-8")).hexdigest()[:12]
     from .retrieve import _normalize_channels, SCOPES
     scope = kwargs.get("scope", "wiki")
     if scope not in SCOPES:
@@ -90,7 +96,21 @@ def retrieve(root: Path, query: str, kb_ids: list[str] | None = None,
     if any(not math.isfinite(float(v)) or float(v) < 0 for v in weights.values()):
         raise ValueError("channel weights must be finite and non-negative")
     entries = registry(root)
+    logger.info(
+        "event=retrieval_started retrieval_id=%s scope=%s requested_kbs=%s channels=%s query_chars=%d",
+        retrieval_id,
+        scope,
+        ",".join(kb_ids or []) or "auto",
+        ",".join(kwargs.get("channels") or []),
+        len(query),
+    )
     route = route_knowledge_bases(root, query, kb_ids)
+    logger.info(
+        "event=retrieval_routed retrieval_id=%s selected_kbs=%s fallback=%s",
+        retrieval_id,
+        ",".join(route["selected_kb_ids"]),
+        route["fallback"],
+    )
     limit = max(1, min(50, int(kwargs.get("top_k", 10))))
     rrf_k = float(kwargs.get("rrf_k", 60))
     if not 1 <= rrf_k <= 10000:
@@ -99,18 +119,46 @@ def retrieve(root: Path, query: str, kb_ids: list[str] | None = None,
 
     def execute(ids):
         with ThreadPoolExecutor(max_workers=min(8, max(1, len(ids)))) as pool:
-            futures = {pool.submit(local_retrieve, query, root=entries[i]["root"], **kwargs): i for i in ids}
+            futures = {}
+            for identifier in ids:
+                kb_started = time.perf_counter()
+                logger.info(
+                    "event=kb_started retrieval_id=%s kb_id=%s",
+                    retrieval_id, identifier,
+                )
+                futures[pool.submit(local_retrieve, query, root=entries[identifier]["root"], **kwargs)] = (identifier, kb_started)
             for future in as_completed(futures):
-                identifier = futures[future]
+                identifier, kb_started = futures[future]
                 try:
                     responses[identifier] = future.result()
+                    response = responses[identifier]
+                    logger.info(
+                        "event=kb_completed retrieval_id=%s kb_id=%s elapsed_ms=%.1f result_count=%d embedding_status=%s",
+                        retrieval_id,
+                        identifier,
+                        (time.perf_counter() - kb_started) * 1000.0,
+                        len(response.get("results", [])),
+                        response.get("embedding", {}).get("status", "unknown"),
+                    )
                 except Exception as error:
                     errors[identifier] = embedding.redact(str(error))
+                    logger.warning(
+                        "event=kb_failed retrieval_id=%s kb_id=%s elapsed_ms=%.1f error_type=%s error=%s",
+                        retrieval_id,
+                        identifier,
+                        (time.perf_counter() - kb_started) * 1000.0,
+                        type(error).__name__,
+                        errors[identifier].replace("\n", " ")[:300],
+                    )
 
     execute(route["selected_kb_ids"])
     if not any(item["results"] for item in responses.values()):
         remaining = [i for i in route["candidate_kb_ids"] if i not in responses and i not in errors]
         if remaining:
+            logger.info(
+                "event=retrieval_fallback retrieval_id=%s remaining_kbs=%s",
+                retrieval_id, ",".join(remaining),
+            )
             execute(remaining)
             route["fallback"] = True
     ranking = []
@@ -131,8 +179,17 @@ def retrieve(root: Path, query: str, kb_ids: list[str] | None = None,
     ranking.sort(key=lambda e: (-e["fused_score"], e["kb_id"], e["path"]))
     ranking = ranking[:limit]
     _bound_evidence(ranking, kwargs.get("include_content", False))
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    logger.info(
+        "event=retrieval_completed retrieval_id=%s elapsed_ms=%.1f result_count=%d queried_kbs=%s error_count=%d",
+        retrieval_id,
+        elapsed_ms,
+        len(ranking),
+        ",".join(sorted(set(responses) | set(errors))),
+        len(errors),
+    )
     return {"query": query, "scope": kwargs.get("scope", "wiki"), "results": ranking,
             "routing": route, "queried_kb_ids": sorted(set(responses) | set(errors)),
             "errors": errors, "partial_failure": bool(errors), "duplicate": bool(responses) and all(r.get("duplicate") for r in responses.values()),
             "kb_status": {i: {k: v for k, v in r.items() if k != "results"} for i, r in responses.items()},
-            "timings": {"total_ms": (time.perf_counter() - started) * 1000}}
+            "timings": {"total_ms": elapsed_ms}}

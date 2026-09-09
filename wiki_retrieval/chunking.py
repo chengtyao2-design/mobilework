@@ -6,13 +6,16 @@ import hashlib
 import re
 from typing import Any
 
-WIKI_TARGET_CHARS = 1400
-WIKI_MAX_CHARS = 2000
-WIKI_OVERLAP_CHARS = 160
-WIKI_MIN_HEADING_SPLIT_CHARS = 600
-SOURCE_TARGET_CHARS = 1600
-SOURCE_MAX_CHARS = 1800
-SOURCE_OVERLAP_CHARS = 120
+# BGE-small has a 512-token input window. Chinese text is often close to one
+# token per character, so leave room for headings and special tokens instead
+# of silently truncating most of a chunk inside the embedding runtime.
+WIKI_TARGET_CHARS = 420
+WIKI_MAX_CHARS = 460
+WIKI_OVERLAP_CHARS = 60
+WIKI_MIN_HEADING_SPLIT_CHARS = 180
+SOURCE_TARGET_CHARS = 420
+SOURCE_MAX_CHARS = 460
+SOURCE_OVERLAP_CHARS = 60
 
 _HEADING = re.compile(r"^(#{2,6})\s+(.+?)\s*$")
 _CLAIM_MARKER = re.compile(r"<!--\s*wiki-claim:.*?-->", re.DOTALL)

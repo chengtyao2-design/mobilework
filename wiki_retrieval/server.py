@@ -11,8 +11,11 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import sys
+import time
 from functools import wraps
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Literal
 
@@ -21,6 +24,27 @@ for _noisy in ("httpx", "httpcore", "lancedb", "urllib3"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 logger = logging.getLogger("wiki_retrieval")
+
+
+def configure_observability(root: Path) -> Path:
+    """Persist compact retrieval lifecycle logs without query or evidence text."""
+    level_name = (os.environ.get("MOBILEWORK_LOG_LEVEL") or "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    target = root / ".mobilework-state" / "logs" / "retrieval.log"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    logger.setLevel(level)
+    if not any(getattr(handler, "_mobilework_observability", False) for handler in logger.handlers):
+        handler = RotatingFileHandler(
+            target, maxBytes=1_000_000, backupCount=2, encoding="utf-8"
+        )
+        handler.setLevel(level)
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+        ))
+        handler._mobilework_observability = True  # type: ignore[attr-defined]
+        logger.addHandler(handler)
+    return target
 
 SERVER_NAME = "mobile-retrieval"
 ROOT_CATEGORY = "(root)"
@@ -129,7 +153,19 @@ def _retrieval_dump(payload: dict, max_bytes: int = 14000) -> str:
         page = {key: hit[key] for key in (
             "page_id", "path", "title", "scope", "kb_id", "kb_name",
             "rank_in_kb", "global_score", "matched_claims", "verification_status",
-            "freshness_factor") if key in hit}
+            "freshness_factor", "source_titles", "source_metadata") if key in hit}
+        metadata = hit.get("source_metadata", {})
+        citation = {
+            "knowledge_base": hit.get("kb_name", hit.get("kb_id", "")),
+            "title": hit.get("title", ""),
+            "evidence_type": "original_source" if hit.get("scope") == "source" else "wiki_summary",
+        }
+        if hit.get("source_titles"):
+            citation["derived_from"] = hit["source_titles"]
+        for key in ("publisher", "source_published_at", "source_updated_at", "effective_from", "effective_to", "source_url"):
+            if metadata.get(key):
+                citation[key] = metadata[key]
+        page["citation"] = citation
         page["matched_chunks"] = [
             {key: value for key, value in chunk.items()
              if key in ("chunk_id", "heading_path", "text", "claim_ids")}
@@ -191,8 +227,13 @@ def build_server(root: Path):
         profile: str | None = None,
         overrides: dict | None = None,
     ) -> str:
-        return _retrieval_dump(
-            _retrieve(
+        started = time.perf_counter()
+        logger.info(
+            "event=tool_started tool=retrieve profile=%s scope=%s kb_count=%d query_chars=%d",
+            profile or "default", scope, len(kb_ids or []), len(query),
+        )
+        try:
+            payload = _retrieve(
                 query,
                 scope=scope,
                 channels=channels,
@@ -205,7 +246,21 @@ def build_server(root: Path):
                 profile=profile,
                 overrides=overrides,
             )
+        except Exception as error:
+            logger.error(
+                "event=tool_failed tool=retrieve elapsed_ms=%.1f error_type=%s error=%s",
+                (time.perf_counter() - started) * 1000.0,
+                type(error).__name__,
+                str(error).replace("\n", " ")[:300],
+            )
+            raise
+        logger.info(
+            "event=tool_completed tool=retrieve elapsed_ms=%.1f result_count=%d partial_failure=%s",
+            (time.perf_counter() - started) * 1000.0,
+            len(payload.get("results", [])),
+            payload.get("partial_failure", False),
         )
+        return _retrieval_dump(payload)
 
     @server.tool(
         description=(
@@ -267,15 +322,17 @@ def main() -> None:
 
         root = resolve_root()
         embedding.load_dotenv(root)
+        log_path = configure_observability(root)
         from .federated import registry
         corpus = loader.get_corpus(next(iter(registry(root).values()))["root"])
         server = build_server(root)
-        logger.warning(
-            "serving %s from %s (%d wiki page(s), %d source file(s))",
+        logger.info(
+            "event=server_started server=%s root=%s wiki_pages=%d source_files=%d log=%s",
             SERVER_NAME,
             root,
             len(corpus.wiki_docs),
             len(corpus.source_docs),
+            log_path,
         )
     server.run("stdio")
 
