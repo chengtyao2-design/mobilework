@@ -1,0 +1,157 @@
+version = 1
+
+[runtime]
+# 留空表示使用操作系统默认用户状态目录。
+state_dir = ""
+log_level = "INFO"
+
+[embedding]
+# 默认只使用 OpenRouter。修改模型或切换 embedding backend 后必须重建索引。
+mode = "remote"
+backend_priority = ["remote"]
+normalize = true
+cache_enabled = true
+cache_max_entries = 100000
+
+[embedding.remote]
+provider = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+model = "qwen/qwen3-embedding-8b"
+api_key_env = "OPENROUTER_API_KEY"
+timeout_ms = 30000
+batch_size = 32
+
+[indexing]
+chunk_size_chars = 1800
+chunk_overlap_chars = 200
+include_heading_path = true
+heading_merge = "same-section"
+incremental_enabled = true
+refresh_mode = "on_start"
+stale_policy = "compatible_channels"
+max_incremental_files = 1000
+max_incremental_bytes = 104857600
+large_directory_file_threshold = 10000
+large_directory_bytes_threshold = 1073741824
+large_directory_scan_ms_threshold = 10000
+disable_on_query_refresh_for_large_directory = true
+hash_workers = 4
+rebuild_timeout_ms = 600000
+full_validation_interval_minutes = 0
+
+[vector_store]
+backend = "lancedb"
+metric = "cosine"
+create_ann_index = true
+ann_index_type = "IVF_FLAT"
+ann_min_rows = 1000
+target_partition_size = 256
+
+[fusion]
+rrf_k = 60.0
+bm25_weight = 1.0
+vector_weight = 1.0
+graph_weight = 0.35
+entity_weight = 0.35
+channel_candidate_pool = 30
+final_top_k = 5
+route_confidence = 0.5
+fallback_on_no_match = true
+
+[fusion.branch_weights]
+exact = 1.0
+semantic = 1.0
+entity = 0.7
+relationship = 0.6
+temporal_current = 0.8
+temporal_history = 0.8
+comparison_axis = 0.8
+provenance = 1.0
+inventory = 1.0
+
+[reranker]
+mode = "auto"
+backend_priority = ["remote"]
+candidate_pool = 30
+batch_size = 16
+timeout_ms = 10000
+latency_budget_ms = 3000
+
+[reranker.remote]
+provider = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+model = "cohere/rerank-4-pro"
+api_key_env = "OPENROUTER_API_KEY"
+
+[entity_expansion]
+mode = "conservative"
+semantic_require_capability = true
+semantic_require_evaluation_pass = true
+high_confidence = 0.90
+medium_confidence = 0.70
+low_confidence = 0.50
+allow_medium_candidates = true
+max_candidates_per_entity = 5
+max_candidates_per_wiki = 10
+semantic_timeout_ms = 5000
+
+[entity_expansion.feature_weights]
+title = 1.0
+alias = 1.0
+entity_type = 0.8
+link_neighborhood = 0.6
+semantic = 0.7
+
+[profiles.fast]
+deadline_ms = 5000
+max_tool_calls = 1
+max_query_branches = 1
+max_subqueries = 1
+allowed_channels = ["keyword", "vector"]
+max_graph_depth = 0
+max_evidence_chars = 6000
+rewrite_mode = "original"
+entity_expand_mode = "off"
+rerank_mode = "off"
+
+[profiles.balanced]
+deadline_ms = 12000
+max_tool_calls = 1
+max_query_branches = 2
+max_subqueries = 1
+allowed_channels = ["keyword", "vector", "entity"]
+max_graph_depth = 0
+max_evidence_chars = 12000
+rewrite_mode = "multi-route-light"
+entity_expand_mode = "off"
+rerank_mode = "auto"
+rerank_candidate_pool = 20
+rerank_latency_budget_ms = 2000
+
+[profiles.reasoning]
+deadline_ms = 30000
+max_tool_calls = 4
+max_query_branches = 4
+max_subqueries = 3
+allowed_channels = ["keyword", "vector", "entity", "graph"]
+max_graph_depth = 1
+max_evidence_chars = 18000
+rewrite_mode = "multi-route"
+entity_expand_mode = "conservative"
+rerank_mode = "auto"
+rerank_candidate_pool = 30
+rerank_latency_budget_ms = 4000
+
+[profiles.research]
+deadline_ms = 90000
+max_tool_calls = 8
+max_query_branches = 6
+max_subqueries = 3
+allowed_channels = ["keyword", "vector", "entity", "graph"]
+max_graph_depth = 2
+max_evidence_chars = 24000
+rewrite_mode = "multi-route"
+entity_expand_mode = "semantic"
+rerank_mode = "auto"
+rerank_candidate_pool = 50
+rerank_latency_budget_ms = 10000

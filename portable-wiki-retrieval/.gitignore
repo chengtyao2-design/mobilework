@@ -1,0 +1,24 @@
+# User secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+config.toml
+
+# Runtime state and generated indexes
+.portable-wiki/
+.state/
+.indexes/
+
+# Python/build artifacts
+.venv/
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+
+# Editor and operating-system metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

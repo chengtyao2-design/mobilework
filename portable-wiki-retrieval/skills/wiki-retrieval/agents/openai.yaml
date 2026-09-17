@@ -1,0 +1,4 @@
+interface:
+  display_name: "Wiki 检索"
+  short_description: "检索已注册的本地 Markdown Wiki 并引用证据"
+  default_prompt: "使用 $wiki-retrieval 检索已注册 Wiki，只依据返回证据回答并标注文件来源。"

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "portable-wiki-retrieval"
+version = "0.1.0"
+description = "可移植的本地 Markdown Wiki 检索 MCP"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{name = "Portable Wiki Retrieval contributors"}]
+dependencies = [
+  "httpx>=0.27,<1",
+  "lancedb>=0.38,<0.39",
+  "mcp>=2,<3",
+  "numpy>=1.26,<3",
+  "pydantic>=2.8,<3",
+  "PyYAML>=6,<7",
+]
+
+[project.scripts]
+portable-wiki = "portable_wiki_retrieval.cli:main"
+portable-wiki-mcp = "portable_wiki_retrieval.server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
